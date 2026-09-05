@@ -1,0 +1,32 @@
+{
+  "id": "complex-demo",
+  "objective": "Build, test and launch a real application with verified outcomes",
+  "constraints": [
+    "Core orchestration must be custom-built",
+    "No completion claim without evidence"
+  ],
+  "criteria": [
+    {
+      "id": "requirements",
+      "statement": "Acceptance criteria are explicit",
+      "mandatory": true,
+      "status": "PENDING",
+      "evidence": ["Mission contract reviewed"]
+    },
+    {
+      "id": "implementation",
+      "statement": "Required implementation exists",
+      "mandatory": true
+    },
+    {
+      "id": "runtime",
+      "statement": "Application runs successfully",
+      "mandatory": true
+    },
+    {
+      "id": "production",
+      "statement": "Requested production outcome is verified",
+      "mandatory": true
+    }
+  ]
+}
