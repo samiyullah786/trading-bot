@@ -17,5 +17,22 @@ class AutonomyTests(unittest.TestCase):
         loop = AutonomousLoop(OutcomeKernel(mission), DeterministicStrategist())
         self.assertEqual(loop.cycle()["state"], "COMPLETE")
 
+    def test_executor_evidence_completes_mission(self):
+        mission = Mission.create("build", [Criterion("R1", "works")])
+        def executor(_):
+            return True, "observed success", ["independent proof"]
+        loop = AutonomousLoop(OutcomeKernel(mission), DeterministicStrategist(), executor)
+        result = loop.run()
+        self.assertTrue(result["result"]["complete"])
+
+    def test_failed_execution_does_not_claim_success(self):
+        mission = Mission.create("build", [Criterion("R1", "works")])
+        def executor(_):
+            return False, "build failed", []
+        loop = AutonomousLoop(OutcomeKernel(mission), DeterministicStrategist(), executor)
+        result = loop.cycle()
+        self.assertIn(result["state"], ("RECOVER", "BLOCKED"))
+        self.assertFalse(OutcomeKernel(mission).verify())
+
 if __name__ == "__main__":
     unittest.main()
