@@ -1,87 +1,51 @@
 # AUREON — Autonomous Universal Execution Engine
 
-AUREON is a custom-built, outcome-driven autonomous execution system.
+AUREON is a custom-built, outcome-driven autonomous execution system for complex digital work.
 
-## Mission
+## Prime objective
 
-AUREON is designed to work toward **verified outcomes**, not merely generate code or complete a checklist.
+Turn a user objective into a **verified real-world outcome**. Code generation is a capability, not the definition of success.
 
-Its governing loop is:
+## Control loop
 
+```text
+OBSERVE → MODEL → FIND GAPS → GENERATE OPTIONS → SELECT → EXECUTE
+   ↑                                                        ↓
+   └──────────── VERIFY EVIDENCE ← CRITIC ← RECOVER ←──────┘
 ```
-OBSERVE
-  ↓
-MODEL REALITY
-  ↓
-FIND GAPS
-  ↓
-PROPOSE OPTIONS
-  ↓
-SELECT ACTION
-  ↓
-EXECUTE
-  ↓
-VERIFY WITH EVIDENCE
-  ↓
-RECOVER / REPLAN
-  ↓
-REPEAT UNTIL PROVEN COMPLETE
-```
+
+## Current core
+
+- Mission compiler and explicit acceptance criteria
+- Evidence-gated completion
+- World observations and persistent mission state
+- Candidate planning and materially-better alternative selection
+- Autonomous execution loop with bounded resource controls
+- Failure fingerprinting and blind-retry prevention
+- Workspace containment
+- Standard-library terminal execution
+- Risk/approval policy boundary
+- Action/evidence ledger
+- Provider-independent intelligence interface
+- Provider-independent browser operator contract
+- Resumable mission runner
 
 ## From-scratch rule
 
-The following AUREON systems are implemented as custom project code:
+AUREON's orchestration and control plane is custom code. It intentionally avoids autonomous-agent frameworks such as LangChain, LangGraph, AutoGen, CrewAI, OpenHands and Aider.
 
-- mission model
-- outcome kernel
-- acceptance criteria
-- evidence accounting
-- planning
-- action protocol
-- autonomous loop
-- recovery logic
-- persistence
-- workspace boundary
-- terminal execution boundary
-- verification
+External model APIs may supply language/reasoning intelligence; they do not own mission truth, tool policy, completion, or persistence.
 
-AUREON deliberately does **not** depend on LangChain, LangGraph, AutoGen, CrewAI, OpenHands, Aider, or another autonomous-agent framework.
+## Non-negotiable completion rule
 
-## Current capabilities
+AUREON never converts confidence into completion. Every mandatory acceptance criterion needs evidence. Failed work remains failed until a new observation demonstrates progress or success.
 
-- Persistent missions
-- Mandatory acceptance criteria
-- Evidence-based completion
-- Gap detection
-- Dependency-aware action readiness
-- Deterministic action planning
-- Custom autonomous control loop
-- Failure fingerprinting
-- Blind-retry prevention
-- Workspace containment
-- Terminal execution through the Python standard library
-- Provider-independent intelligence interface
+## Engineering direction
 
-## Run tests
+The next layers are being built toward a complete autonomous computer operator: structured reasoning, dependency graphs, research/evidence collection, browser execution, code/test/debug cycles, adversarial QA, deployment verification and durable recovery.
+
+## Test
 
 ```bash
 python -m unittest discover -s tests -v
 ```
-
-## Important engineering principle
-
-AUREON's intelligence provider can suggest what to do.
-
-**Only the AUREON verification system can determine whether the mission is complete.**
-
-## Roadmap
-
-### Next
-1. Action executor that connects plans to terminal/file tools
-2. Structured intelligence adapter
-3. Long-running mission scheduler
-4. Browser operator boundary
-5. Research/evidence subsystem
-6. Adversarial critic
-7. Production deployment verifier
-8. Multi-agent specialisation under one mission controller
