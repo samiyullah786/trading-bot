@@ -4,7 +4,6 @@ from dataclasses import dataclass
 
 from .autonomy import AutonomousLoop
 from .checkpoint import CheckpointStore
-from .domain import Mission
 from .ledger import Ledger
 from .learning import LearningController, MissionOutcome
 from .memory import CognitiveMemory, MemoryItem
@@ -19,7 +18,7 @@ class AgentRunResult:
 
 
 class AgentRuntime:
-    """Closed-loop runtime: act, observe, recover, remember, learn, checkpoint."""
+    """Closed-loop runtime: act, observe, recover, remember, checkpoint."""
 
     def __init__(self, loop: AutonomousLoop, memory: CognitiveMemory, learning: LearningController, ledger: Ledger | None = None, checkpoints: CheckpointStore | None = None):
         self.loop = loop
@@ -52,6 +51,7 @@ class AgentRuntime:
             "observation": observation,
             "attempt": cycle,
         })
+        self.loop.apply_recovery(plan)
         self.ledger.append("recovery.plan", f"generated {len(plan.hypotheses)} recovery hypotheses", mission_id=mission_id, cycle=cycle)
         return plan
 
@@ -78,7 +78,7 @@ class AgentRuntime:
             if state == "COMPLETE":
                 self.learning.record(MissionOutcome(mission_id, True, "autonomous_loop", "verified mission completion"))
                 return AgentRunResult(state, cycle, result)
-            if state == "BLOCKED":
+            if state == "BLOCKED" and not recovery.hypotheses:
                 self.learning.record(MissionOutcome(mission_id, False, "autonomous_loop", result.get("reason", "blocked")))
                 return AgentRunResult(state, cycle, result)
 
