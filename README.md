@@ -4,77 +4,75 @@
 
 AUREON is a custom-built autonomous execution and cognitive-agent research runtime.
 
-It does not claim to be AGI or ASI. General intelligence and superintelligence are research targets that require extraordinary, reproducible evidence.
+It does **not** claim to be AGI or ASI. Those labels require evidence far beyond architecture diagrams or unit tests.
 
-## Closed-loop architecture
+## End-to-end execution path
 
 MISSION
 → CONTRACT / ACCEPTANCE CRITERIA
-→ CONTEXT + MEMORY
+→ MEMORY + CONTEXT
 → REASONING PROVIDER
-→ METACOGNITIVE UNCERTAINTY CHECK
+→ METACOGNITION
 → CANDIDATE ACTIONS
-→ RISK / APPROVAL BOUNDARY
-→ TOOL EXECUTION
+→ EXECUTION BOUNDARY
 → OBSERVATION
 → EVIDENCE
 → VERIFICATION
-→ ADVERSARIAL CRITIQUE
-→ RECOVERY / REPLAN
-→ EPISODIC MEMORY
+→ CRITIQUE / RECOVERY
 → LEARNING
-→ VERIFIED COMPLETION
+→ COMPLETE ONLY WHEN PROVEN
 
-## Implemented
+## Demonstrated integration
+
+The repository now contains an executable end-to-end path:
+
+- structured mission
+- provider-generated executable actions
+- terminal execution
+- observations
+- evidence attachment
+- criterion verification
+- verified mission completion
+
+Run:
+
+```bash
+python examples/end_to_end_demo.py
+python -m unittest discover -s tests -v
+```
+
+## Implemented foundations
 
 ### Execution
 - Mission contracts
 - Autonomous cycles
-- Task decomposition and dependency graphs
+- Task graphs
 - Strategy selection
-- Terminal execution boundary
 - Tool routing
-- Workspace containment
-- Recovery controls
+- Terminal execution
+- Recovery boundaries
 - Quality gates
 - Adversarial critique
 
-### Cognitive systems
-- Working, episodic and semantic memory
-- Hypothesis tracking and experiments
+### Cognitive architecture
+- Working / episodic / semantic memory
+- Hypothesis tracking
+- Experiment primitives
 - Skill reliability learning
-- Metacognition and uncertainty tracking
-- Cross-domain benchmark measurement
+- Metacognition
+- Capability benchmarks
 - Transfer evaluation
-- Closed-loop agent runtime
 
-### Integration and production foundations
+### Integration
 - Provider-independent reasoning interface
-- Structured reasoning requests/responses
 - Agent controller
+- End-to-end mission executor
+- Deterministic demo provider
 - Human approval gate
-- JSON runtime persistence with path validation
-- CI workflow and regression tests
+- Persistent runtime state
+- CI configuration
+- Regression and end-to-end tests
 
-## Validation
+## Honest remaining work
 
-```bash
-python -m compileall -q src tests
-python -m unittest discover -s tests -v
-```
-
-## Completion standard
-
-The repository is not considered complete merely because modules exist.
-
-AUREON needs demonstrated end-to-end missions with:
-
-1. a real objective,
-2. planning and action selection,
-3. tool execution,
-4. failure recovery,
-5. evidence collection,
-6. independent verification,
-7. reproducible results.
-
-Only demonstrated outcomes count as completion evidence.
+This is not yet a complete real-world autonomous AGI/ASI system. Major remaining work includes real browser adapters, authenticated external-service integrations, robust isolation, durable databases, deployment infrastructure, security review, richer planners, real benchmark suites, and repeated real-world mission demonstrations.
