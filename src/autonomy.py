@@ -48,7 +48,7 @@ class AutonomousLoop:
         if not proposals:
             return {"state": "BLOCKED", "reason": "no action proposed", "gaps": gaps, "report": report}
         proposal = proposals[0]
-        action = Action(f"A{len(self.kernel.mission.actions) + 1}", proposal.description, proposal.criterion_ids, Status.READY)
+        action = Action(id=f"A{len(self.kernel.mission.actions) + 1}", description=proposal.description, criterion_ids=proposal.criterion_ids, status=Status.READY)
         self.kernel.mission.actions.append(action)
         if self.executor is None:
             return {"state": "READY", "action": action.id, "description": action.description, "gaps": gaps, "report": report}
