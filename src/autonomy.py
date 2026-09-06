@@ -16,6 +16,8 @@ class ProposedAction:
     command: list[str] | None = None
     expected_observation: str = ""
     verification_command: list[str] | None = None
+    tool_name: str | None = None
+    tool_payload: dict | None = None
 
 
 class Strategist(Protocol):
