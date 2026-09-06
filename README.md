@@ -2,55 +2,59 @@
 
 ## Status: active engineering build
 
-AUREON is a custom autonomous execution and cognitive-agent research runtime.
+AUREON is a custom-built autonomous execution and cognitive-agent research runtime.
 
-It does not claim to be AGI or ASI. Capability claims require measurable evidence.
+It does not claim to be AGI or ASI. General intelligence and superintelligence are research targets that require extraordinary, reproducible evidence.
 
-## End-to-end architecture
+## Closed-loop architecture
 
-MISSION INPUT
-→ MISSION FACTORY
-→ ACCEPTANCE CRITERIA
-→ TASK / STRATEGY
+MISSION
+→ CONTRACT / ACCEPTANCE CRITERIA
+→ CONTEXT + MEMORY
+→ REASONING PROVIDER
+→ METACOGNITIVE UNCERTAINTY CHECK
+→ CANDIDATE ACTIONS
+→ RISK / APPROVAL BOUNDARY
 → TOOL EXECUTION
 → OBSERVATION
 → EVIDENCE
 → VERIFICATION
-→ CRITIQUE / RECOVERY
-→ MEMORY
+→ ADVERSARIAL CRITIQUE
+→ RECOVERY / REPLAN
+→ EPISODIC MEMORY
 → LEARNING
 → VERIFIED COMPLETION
 
-## Integrated runtime
+## Implemented
 
-The AgentRuntime now connects:
-
-- autonomous mission cycles
-- episodic memory
-- append-only ledger
-- verified outcomes
-- reusable learning signals
-
-## Implemented foundations
-
+### Execution
 - Mission contracts
-- Evidence-gated completion
 - Autonomous cycles
 - Task decomposition and dependency graphs
 - Strategy selection
 - Terminal execution boundary
-- Tool router
+- Tool routing
 - Workspace containment
 - Recovery controls
 - Quality gates
 - Adversarial critique
-- Working / episodic / semantic memory
-- Hypothesis and experiment primitives
-- Skill reliability tracking
-- Metacognition
-- Benchmark measurement
+
+### Cognitive systems
+- Working, episodic and semantic memory
+- Hypothesis tracking and experiments
+- Skill reliability learning
+- Metacognition and uncertainty tracking
+- Cross-domain benchmark measurement
 - Transfer evaluation
 - Closed-loop agent runtime
+
+### Integration and production foundations
+- Provider-independent reasoning interface
+- Structured reasoning requests/responses
+- Agent controller
+- Human approval gate
+- JSON runtime persistence with path validation
+- CI workflow and regression tests
 
 ## Validation
 
@@ -59,6 +63,18 @@ python -m compileall -q src tests
 python -m unittest discover -s tests -v
 ```
 
-## Remaining project work
+## Completion standard
 
-The project is not complete. Major remaining work includes real intelligence-provider integration, richer browser/tool adapters, persistent storage, stronger sandboxing, end-to-end mission demonstrations, production deployment architecture, security hardening, and reproducible benchmark suites.
+The repository is not considered complete merely because modules exist.
+
+AUREON needs demonstrated end-to-end missions with:
+
+1. a real objective,
+2. planning and action selection,
+3. tool execution,
+4. failure recovery,
+5. evidence collection,
+6. independent verification,
+7. reproducible results.
+
+Only demonstrated outcomes count as completion evidence.
