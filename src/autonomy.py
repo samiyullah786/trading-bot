@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Protocol, Iterable, Callable
+
 from .domain import Mission, Action, Status
 from .kernel import OutcomeKernel
 from .recovery import RecoveryEngine
 from .critic import AdversarialCritic
+
 
 @dataclass
 class ProposedAction:
@@ -13,18 +15,27 @@ class ProposedAction:
     criterion_ids: list[str]
     command: list[str] | None = None
     expected_observation: str = ""
+    verification_command: list[str] | None = None
+
 
 class Strategist(Protocol):
     def propose(self, mission: Mission, gaps: list[str]) -> Iterable[ProposedAction]: ...
+
 
 class DeterministicStrategist:
     def propose(self, mission: Mission, gaps: list[str]) -> Iterable[ProposedAction]:
         for gap in gaps:
             criterion = next(c for c in mission.criteria if c.id == gap)
-            yield ProposedAction(f"Investigate and satisfy: {criterion.statement}", [gap], expected_observation=f"evidence that {criterion.statement} is true")
+            yield ProposedAction(
+                f"Investigate and satisfy: {criterion.statement}",
+                [gap],
+                expected_observation=f"evidence that {criterion.statement} is true",
+            )
+
 
 class AutonomousLoop:
     """Closed outcome loop; completion requires verification and a clean adversarial review."""
+
     def __init__(self, kernel: OutcomeKernel, strategist: Strategist, executor: Callable[[ProposedAction], tuple[bool, str, list[str]]] | None = None, critic: AdversarialCritic | None = None):
         self.kernel = kernel
         self.strategist = strategist
