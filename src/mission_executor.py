@@ -6,18 +6,34 @@ from .domain import Mission
 from .kernel import OutcomeKernel
 from .action_executor import ActionExecutor
 
+
 class ControllerStrategist:
     def __init__(self, controller: AgentController, constraints: list[str] | None = None):
         self.controller = controller
         self.constraints = constraints or []
 
-    def propose(self, mission: Mission, gaps: list[str]):
+    def _decide(self, mission: Mission, gaps: list[str], recovery=None):
         context = {"objective": mission.objective, "gaps": gaps, "criteria": [{"id": c.id, "statement": c.statement} for c in mission.criteria]}
-        decision = self.controller.decide(mission.objective, context, mission.constraints + self.constraints)
+        if recovery:
+            context["recovery_hypotheses"] = [
+                {"description": getattr(h, "description", ""), "strategy": getattr(h, "strategy", ""), "expected_improvement": getattr(h, "expected_improvement", 0.0), "risk": getattr(h, "risk", 0.0)}
+                for h in recovery
+            ]
+        return self.controller.decide(mission.objective, context, mission.constraints + self.constraints)
+
+    def propose(self, mission: Mission, gaps: list[str]):
+        yield from self._filter(self._decide(mission, gaps), gaps)
+
+    def propose_with_recovery(self, mission: Mission, gaps: list[str], recovery):
+        yield from self._filter(self._decide(mission, gaps, recovery), gaps)
+
+    @staticmethod
+    def _filter(decision, gaps):
         gap_set = set(gaps)
         for action in decision.actions:
             if gap_set.intersection(action.criterion_ids):
                 yield action
+
 
 @dataclass
 class MissionExecution:
@@ -25,6 +41,7 @@ class MissionExecution:
     state: str
     history: list[dict]
     report: dict
+
 
 class EndToEndMissionExecutor:
     def __init__(self, controller: AgentController, executor: ActionExecutor):
