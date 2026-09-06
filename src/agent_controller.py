@@ -35,12 +35,16 @@ class AgentController:
             criteria = list(item.get("criterion_ids", []))
             command = item.get("command")
             verification_command = item.get("verification_command")
+            tool_name = item.get("tool_name")
+            tool_payload = item.get("tool_payload")
             if description and criteria:
                 actions.append(ProposedAction(
                     description=description,
                     criterion_ids=criteria,
                     command=command,
                     verification_command=verification_command,
+                    tool_name=str(tool_name) if tool_name else None,
+                    tool_payload=dict(tool_payload) if isinstance(tool_payload, dict) else None,
                 ))
         return ControllerDecision(
             actions=actions,
