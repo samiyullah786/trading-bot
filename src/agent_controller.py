@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+
 from .provider import IntelligenceProvider, ReasoningRequest
 from .metacognition import Metacognition
 from .autonomy import ProposedAction
+
 
 @dataclass
 class ControllerDecision:
@@ -11,6 +13,7 @@ class ControllerDecision:
     confidence: float
     unknowns: list[str]
     requires_research: bool
+
 
 class AgentController:
     """Turns structured reasoning into inspectable candidate actions."""
@@ -31,8 +34,14 @@ class AgentController:
             description = str(item.get("description", "")).strip()
             criteria = list(item.get("criterion_ids", []))
             command = item.get("command")
+            verification_command = item.get("verification_command")
             if description and criteria:
-                actions.append(ProposedAction(description, criteria, command))
+                actions.append(ProposedAction(
+                    description=description,
+                    criterion_ids=criteria,
+                    command=command,
+                    verification_command=verification_command,
+                ))
         return ControllerDecision(
             actions=actions,
             confidence=assessment.confidence,
