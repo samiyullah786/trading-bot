@@ -1,52 +1,64 @@
 # AUREON — Autonomous Universal Execution Engine
 
-## Cognitive systems build
+## Status: active engineering build
 
-AUREON is evolving from an autonomous execution engine into a research architecture for increasingly general autonomous problem-solving.
+AUREON is a custom autonomous execution and cognitive-agent research runtime.
 
-It does **not** claim to be AGI or ASI.
+It does not claim to be AGI or ASI. Capability claims require measurable evidence.
 
-## Current execution stack
+## End-to-end architecture
 
-MISSION → DECOMPOSE → PLAN → SELECT → EXECUTE → OBSERVE → EVIDENCE → VERIFY → CRITIQUE → RECOVER
+MISSION INPUT
+→ MISSION FACTORY
+→ ACCEPTANCE CRITERIA
+→ TASK / STRATEGY
+→ TOOL EXECUTION
+→ OBSERVATION
+→ EVIDENCE
+→ VERIFICATION
+→ CRITIQUE / RECOVERY
+→ MEMORY
+→ LEARNING
+→ VERIFIED COMPLETION
 
-## New cognitive stack
+## Integrated runtime
 
-MEMORY → HYPOTHESES → EXPERIMENTS → SKILLS → METACOGNITION → TRANSFER EVALUATION
+The AgentRuntime now connects:
 
-### Implemented cognitive subsystems
+- autonomous mission cycles
+- episodic memory
+- append-only ledger
+- verified outcomes
+- reusable learning signals
 
-- Working memory
-- Episodic mission memory
-- Semantic knowledge memory
-- Cross-store recall
-- Competing hypothesis tracking
-- Evidence-driven confidence updates
-- Experiment specifications
-- Reusable skill library
+## Implemented foundations
+
+- Mission contracts
+- Evidence-gated completion
+- Autonomous cycles
+- Task decomposition and dependency graphs
+- Strategy selection
+- Terminal execution boundary
+- Tool router
+- Workspace containment
+- Recovery controls
+- Quality gates
+- Adversarial critique
+- Working / episodic / semantic memory
+- Hypothesis and experiment primitives
 - Skill reliability tracking
-- Explicit uncertainty assessment
+- Metacognition
+- Benchmark measurement
+- Transfer evaluation
+- Closed-loop agent runtime
 
-## Capability roadmap
-
-The project distinguishes:
-
-1. Tool agent
-2. Generalist autonomous agent
-3. Adaptive learning agent
-4. AGI research target
-5. ASI research target
-
-Capability claims require reproducible evidence and benchmarks.
-
-See `docs/AGI_ASI_SCOPE.md`.
-
-## Tests
+## Validation
 
 ```bash
+python -m compileall -q src tests
 python -m unittest discover -s tests -v
 ```
 
-## Current engineering objective
+## Remaining project work
 
-Integrate the execution runtime and cognitive systems into one closed-loop architecture where experience can improve future mission selection, planning, experimentation and verification.
+The project is not complete. Major remaining work includes real intelligence-provider integration, richer browser/tool adapters, persistent storage, stronger sandboxing, end-to-end mission demonstrations, production deployment architecture, security hardening, and reproducible benchmark suites.
