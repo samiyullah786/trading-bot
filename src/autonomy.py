@@ -99,14 +99,23 @@ class AutonomousLoop:
 
         candidates = [candidate for candidate, _ in pairs]
         completed = {criterion.id for criterion in self.kernel.mission.criteria if criterion.status == Status.VERIFIED}
-        plans = self.planner.diverse_plans(candidates, count=min(3, len(candidates)), max_actions=max(1, len(candidates)))
-        if not plans:
+
+        # Feasibility is evaluated from the actual current mission state. Alternatives
+        # must use the same state; a lack of diverse alternatives is not itself a block.
+        plan = self.planner.build_plan(
+            candidates,
+            completed=completed,
+            max_actions=max(1, len(candidates)),
+        )
+        if not plan.actions:
             return {"state": "BLOCKED", "reason": "no dependency-valid plan", "gaps": gaps, "report": report}
 
-        # Prefer the best feasible plan; if dependencies refer to already verified criteria, rebuild with that state.
-        plan = self.planner.build_plan(candidates, completed=completed, max_actions=max(1, len(candidates)))
-        if not plan.actions:
-            plan = plans[0]
+        alternatives = self.planner.diverse_plans(
+            candidates,
+            count=min(3, len(candidates)),
+            max_actions=max(1, len(candidates)),
+            completed=completed,
+        )
         selected = plan.actions[0]
         proposal = next(proposal for candidate, proposal in pairs if candidate is selected)
 
@@ -119,7 +128,16 @@ class AutonomousLoop:
         )
         self.kernel.mission.actions.append(action)
         if self.executor is None:
-            return {"state": "READY", "action": action.id, "description": action.description, "plan_score": plan.score, "plan_size": len(plan.actions), "gaps": gaps, "report": report}
+            return {
+                "state": "READY",
+                "action": action.id,
+                "description": action.description,
+                "plan_score": plan.score,
+                "plan_size": len(plan.actions),
+                "alternative_plans": len(alternatives),
+                "gaps": gaps,
+                "report": report,
+            }
 
         action.status = Status.RUNNING
         try:
@@ -142,6 +160,7 @@ class AutonomousLoop:
                 "complete": complete,
                 "plan_score": plan.score,
                 "plan_size": len(plan.actions),
+                "alternative_plans": len(alternatives),
                 "report": report,
             }
 
@@ -154,6 +173,7 @@ class AutonomousLoop:
             "observation": observation,
             "retry_allowed": retry,
             "replan_required": True,
+            "alternative_plans": len(alternatives),
             "gaps": self.kernel.gaps(),
             "report": self.kernel.report(),
         }
