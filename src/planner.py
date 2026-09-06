@@ -100,18 +100,21 @@ class Planner:
         candidates: list[CandidateAction],
         count: int = 3,
         max_actions: int = 8,
+        completed: set[str] | None = None,
     ) -> list[Plan]:
-        """Return distinct high-scoring alternatives for deliberate replanning."""
+        """Return distinct dependency-valid alternatives from the current state."""
         if count < 1:
             raise ValueError("count must be positive")
         ranked = self.rank(candidates)
         if not ranked:
             return []
+        completed = set(completed or set())
 
         plans: list[Plan] = []
         for seed in ranked[: min(len(ranked), count)]:
             plan = self.build_plan(
                 ranked,
+                completed=completed,
                 max_actions=max_actions,
                 seed=seed,
             )
