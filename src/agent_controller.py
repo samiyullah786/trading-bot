@@ -37,6 +37,16 @@ class AgentController:
             verification_command = item.get("verification_command")
             tool_name = item.get("tool_name")
             tool_payload = item.get("tool_payload")
+            depends_on = item.get("depends_on", [])
+            if not isinstance(depends_on, list):
+                depends_on = []
+            try:
+                expected_progress = float(item.get("expected_progress", 0.5))
+                success_probability = float(item.get("success_probability", 0.5))
+                cost = float(item.get("cost", 0.0))
+                risk = float(item.get("risk", 0.0))
+            except (TypeError, ValueError):
+                expected_progress, success_probability, cost, risk = 0.5, 0.5, 0.0, 0.0
             if description and criteria:
                 actions.append(ProposedAction(
                     description=description,
@@ -45,6 +55,12 @@ class AgentController:
                     verification_command=verification_command,
                     tool_name=str(tool_name) if tool_name else None,
                     tool_payload=dict(tool_payload) if isinstance(tool_payload, dict) else None,
+                    depends_on=[str(value) for value in depends_on],
+                    expected_progress=max(0.0, min(1.0, expected_progress)),
+                    success_probability=max(0.0, min(1.0, success_probability)),
+                    cost=max(0.0, cost),
+                    risk=max(0.0, risk),
+                    reversible=bool(item.get("reversible", True)),
                 ))
         return ControllerDecision(
             actions=actions,
