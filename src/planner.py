@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from itertools import combinations
 
 
 @dataclass
@@ -62,17 +61,23 @@ class Planner:
         completed: set[str] | None = None,
         max_actions: int = 8,
         max_risk: float = 1.0,
+        seed: CandidateAction | None = None,
     ) -> Plan:
-        """Greedily construct a dependency-valid plan, reconsidering readiness.
-
-        This is deliberately deterministic and explainable. It is a planning
-        primitive, not a claim that a single heuristic is globally optimal.
-        """
+        """Construct a dependency-valid plan, optionally anchored by a seed."""
         if max_actions < 1:
             raise ValueError("max_actions must be positive")
         completed = set(completed or set())
         remaining = list(candidates)
         chosen: list[CandidateAction] = []
+
+        if seed is not None:
+            if seed not in remaining:
+                raise ValueError("seed must be one of candidates")
+            if seed.risk > max_risk or not self.feasible(seed, completed):
+                return Plan([], 0.0)
+            chosen.append(seed)
+            remaining.remove(seed)
+            completed.update(seed.criterion_ids)
 
         while remaining and len(chosen) < max_actions:
             ready = [
@@ -102,13 +107,17 @@ class Planner:
         ranked = self.rank(candidates)
         if not ranked:
             return []
+
         plans: list[Plan] = []
-        seeds = ranked[: min(len(ranked), count)]
-        for seed in seeds:
-            rest = [candidate for candidate in ranked if candidate is not seed]
-            plan = self.build_plan([seed, *rest], max_actions=max_actions)
+        for seed in ranked[: min(len(ranked), count)]:
+            plan = self.build_plan(
+                ranked,
+                max_actions=max_actions,
+                seed=seed,
+            )
             if plan.actions:
                 plans.append(plan)
+
         unique: list[Plan] = []
         signatures: set[tuple[str, ...]] = set()
         for plan in sorted(plans, key=lambda p: p.score, reverse=True):
