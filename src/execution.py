@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import shutil
 import subprocess
 import time
 
-from .security import EnvironmentFilter, SecurityProfile, SecretRedactor
+from .security import EnvironmentFilter, ExecutablePolicy, SecurityProfile, SecretRedactor
 
 
 @dataclass
@@ -20,20 +21,15 @@ class ExecutionResult:
 
 
 class TerminalExecutor:
-    """Standard-library execution boundary with bounded output and env hygiene."""
+    """Standard-library execution boundary with bounded output, env hygiene and policy."""
 
     name = "terminal"
 
-    def __init__(
-        self,
-        workspace: str | Path,
-        timeout: int = 120,
-        profile: SecurityProfile | None = None,
-        secrets: list[str] | None = None,
-    ):
+    def __init__(self, workspace: str | Path, timeout: int = 120, profile: SecurityProfile | None = None, secrets: list[str] | None = None):
         self.workspace = Path(workspace).resolve()
         self.profile = profile or SecurityProfile(timeout_seconds=float(timeout))
         self.env_filter = EnvironmentFilter(self.profile)
+        self.executable_policy = ExecutablePolicy(self.profile)
         self.redactor = SecretRedactor()
         self.secrets = list(secrets or [])
         if self.profile.timeout_seconds <= 0:
@@ -53,43 +49,22 @@ class TerminalExecutor:
             raise ValueError("command cannot be empty")
         if any(not isinstance(part, str) or not part for part in command):
             raise ValueError("command arguments must be non-empty strings")
+        self.executable_policy.validate(command[0])
 
         started = time.monotonic()
         effective_timeout = float(timeout) if timeout is not None else self.profile.timeout_seconds
         if effective_timeout <= 0:
             raise ValueError("timeout must be positive")
+        if shutil.which(command[0]) is None and not Path(command[0]).is_absolute():
+            return ExecutionResult(False, "", f"executable not found: {command[0]}", 127, time.monotonic() - started, list(command))
         try:
-            completed = subprocess.run(
-                command,
-                cwd=self.workspace,
-                capture_output=True,
-                text=True,
-                timeout=effective_timeout,
-                shell=False,
-                env=self.env_filter.build(),
-            )
+            completed = subprocess.run(command, cwd=self.workspace, capture_output=True, text=True, timeout=effective_timeout, shell=False, env=self.env_filter.build())
             stdout, out_truncated = self._bound(completed.stdout or "")
             stderr, err_truncated = self._bound(completed.stderr or "")
-            return ExecutionResult(
-                success=completed.returncode == 0,
-                stdout=stdout,
-                stderr=stderr,
-                returncode=completed.returncode,
-                duration=time.monotonic() - started,
-                command=list(command),
-                truncated=out_truncated or err_truncated,
-            )
+            return ExecutionResult(completed.returncode == 0, stdout, stderr, completed.returncode, time.monotonic() - started, list(command), out_truncated or err_truncated)
         except subprocess.TimeoutExpired as exc:
             stdout = exc.stdout or ""
             stderr = exc.stderr or ""
             stdout, out_truncated = self._bound(stdout if isinstance(stdout, str) else "")
             stderr, err_truncated = self._bound(stderr if isinstance(stderr, str) else "")
-            return ExecutionResult(
-                success=False,
-                stdout=stdout,
-                stderr=(stderr + "\nTIMEOUT").strip(),
-                returncode=-1,
-                duration=time.monotonic() - started,
-                command=list(command),
-                truncated=out_truncated or err_truncated,
-            )
+            return ExecutionResult(False, stdout, (stderr + "\nTIMEOUT").strip(), -1, time.monotonic() - started, list(command), out_truncated or err_truncated)
