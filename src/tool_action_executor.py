@@ -35,8 +35,9 @@ class ToolActionExecutor:
         decision = self.policy.evaluate(risk, irreversible=not action.reversible)
         if not decision.allowed:
             return False, "POLICY_BLOCKED: " + decision.reason, []
+        action_id = getattr(action, "action_id", None) or "runtime-action"
         request = ToolRequest(
-            action_id=getattr(action, "action_id", "runtime-action"),
+            action_id=action_id,
             intent=action.description,
             payload=dict(action.tool_payload or {}),
             expected_observation=action.expected_observation,
