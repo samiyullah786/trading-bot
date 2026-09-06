@@ -1,42 +1,63 @@
 # AUREON — Autonomous Universal Execution Engine
 
-AUREON is a custom-built outcome engine designed around verified execution rather than text-only completion.
+## Live build status
 
-## Core loop
+AUREON is being built as a custom autonomous execution runtime.
 
-OBSERVE → MODEL → FIND GAPS → GENERATE OPTIONS → SELECT → EXECUTE → RECORD → VERIFY → CRITIQUE → RECOVER → REPEAT
+### Control pipeline
 
-## Current subsystems
+```
+MISSION
+  ↓
+MISSION CONTRACT
+  ↓
+TASK DECOMPOSITION
+  ↓
+DEPENDENCY GRAPH
+  ↓
+PLAN / OPTIONS
+  ↓
+TOOL ROUTING
+  ↓
+EXECUTION
+  ↓
+OBSERVATION + LEDGER
+  ↓
+EVIDENCE
+  ↓
+VERIFICATION + CRITIC
+  ↓
+RECOVERY / REPLAN
+  ↓
+COMPLETE ONLY WHEN PROVEN
+```
+
+### Implemented
 
 - Mission contracts and acceptance criteria
 - Evidence-gated completion
-- Autonomous mission cycles
+- Autonomous cycles
+- Runtime orchestration
+- Structured task decomposition
+- Dependency graphs
+- Strategy selection
+- Tool routing
 - Terminal execution boundary
 - Workspace containment
-- Tool routing
-- Append-only action ledger
+- Append-only ledger
+- Evidence store
 - Failure fingerprinting and bounded recovery
-- Dependency-aware task graphs
-- Strategy selection
-- Adversarial critique
+- Adversarial critic
 - Quality gates
 - Persistent mission state
-- Provider-independent intelligence boundary
+- Provider-independent intelligence interface
 
-## Engineering rule
-
-An intelligence model may propose actions.
-
-It cannot unilaterally declare the mission complete.
-
-Completion belongs to the verification and evidence system.
-
-## Tests
+### Tests
 
 ```bash
 python -m unittest discover -s tests -v
 ```
 
-## Direction
+### Next engineering work
 
-The next integration stages connect the reasoning boundary, dynamic task decomposition, concrete tool routing, test/debug loops, and production verification into one durable execution runtime.
+The next major integration target is connecting the existing subsystems into a single end-to-end runtime capable of receiving a structured mission, selecting executable actions, running them, collecting evidence, and recovering from failures without falsely declaring completion.
