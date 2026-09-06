@@ -14,7 +14,10 @@ class ControllerStrategist:
     def propose(self, mission: Mission, gaps: list[str]):
         context = {"objective": mission.objective, "gaps": gaps, "criteria": [{"id": c.id, "statement": c.statement} for c in mission.criteria]}
         decision = self.controller.decide(mission.objective, context, mission.constraints + self.constraints)
-        yield from decision.actions
+        gap_set = set(gaps)
+        for action in decision.actions:
+            if gap_set.intersection(action.criterion_ids):
+                yield action
 
 @dataclass
 class MissionExecution:
