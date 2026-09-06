@@ -14,6 +14,10 @@ class EnvironmentFilter:
     """Minimizes credential leakage into child processes."""
     SENSITIVE_MARKERS = ("TOKEN", "SECRET", "PASSWORD", "PRIVATE_KEY", "API_KEY", "AUTH")
 
+    @classmethod
+    def is_sensitive(cls, key: str) -> bool:
+        return any(marker in key.upper() for marker in cls.SENSITIVE_MARKERS)
+
     def __init__(self, profile: SecurityProfile):
         self.profile = profile
 
@@ -21,9 +25,9 @@ class EnvironmentFilter:
         if self.profile.inherit_environment:
             result = dict(os.environ)
         else:
-            result = {k: v for k, v in os.environ.items() if not any(marker in k.upper() for marker in self.SENSITIVE_MARKERS)}
+            result = {k: v for k, v in os.environ.items() if not self.is_sensitive(k)}
         if extra:
-            result.update(extra)
+            result.update({k: v for k, v in extra.items() if not self.is_sensitive(k)})
         return result
 
 class SecretRedactor:
