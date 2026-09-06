@@ -23,7 +23,8 @@ class AutonomyTests(unittest.TestCase):
             return True, "observed success", ["independent proof"]
         loop = AutonomousLoop(OutcomeKernel(mission), DeterministicStrategist(), executor)
         result = loop.run()
-        self.assertTrue(result["result"]["complete"])
+        self.assertEqual(result["result"]["state"], "PROGRESS")
+        self.assertTrue(result["result"]["report"]["complete"])
 
     def test_failed_execution_does_not_claim_success(self):
         mission = Mission.create("build", [Criterion("R1", "works")])
