@@ -1,5 +1,4 @@
 import unittest
-
 from src.domain import Mission, Criterion
 from src.kernel import OutcomeKernel
 from src.autonomy import AutonomousLoop, DeterministicStrategist
@@ -23,7 +22,7 @@ class AutonomyTests(unittest.TestCase):
             return True, "observed success", ["independent proof"]
         loop = AutonomousLoop(OutcomeKernel(mission), DeterministicStrategist(), executor)
         result = loop.run()
-        self.assertEqual(result["result"]["state"], "PROGRESS")
+        self.assertEqual(result["result"]["state"], "COMPLETE")
         self.assertTrue(result["result"]["report"]["complete"])
 
     def test_failed_execution_does_not_claim_success(self):
