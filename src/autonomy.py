@@ -25,6 +25,7 @@ class ProposedAction:
     cost: float = 0.0
     risk: float = 0.0
     reversible: bool = True
+    action_id: str | None = None
 
 
 class Strategist(Protocol):
@@ -99,9 +100,6 @@ class AutonomousLoop:
 
         candidates = [candidate for candidate, _ in pairs]
         completed = {criterion.id for criterion in self.kernel.mission.criteria if criterion.status == Status.VERIFIED}
-
-        # Feasibility is evaluated from the actual current mission state. Alternatives
-        # must use the same state; a lack of diverse alternatives is not itself a block.
         plan = self.planner.build_plan(
             candidates,
             completed=completed,
@@ -126,6 +124,7 @@ class AutonomousLoop:
             depends_on=list(proposal.depends_on or []),
             status=Status.READY,
         )
+        proposal.action_id = action.id
         self.kernel.mission.actions.append(action)
         if self.executor is None:
             return {
