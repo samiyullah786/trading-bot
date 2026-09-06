@@ -1,63 +1,52 @@
 # AUREON — Autonomous Universal Execution Engine
 
-## Live build status
+## Cognitive systems build
 
-AUREON is being built as a custom autonomous execution runtime.
+AUREON is evolving from an autonomous execution engine into a research architecture for increasingly general autonomous problem-solving.
 
-### Control pipeline
+It does **not** claim to be AGI or ASI.
 
-```
-MISSION
-  ↓
-MISSION CONTRACT
-  ↓
-TASK DECOMPOSITION
-  ↓
-DEPENDENCY GRAPH
-  ↓
-PLAN / OPTIONS
-  ↓
-TOOL ROUTING
-  ↓
-EXECUTION
-  ↓
-OBSERVATION + LEDGER
-  ↓
-EVIDENCE
-  ↓
-VERIFICATION + CRITIC
-  ↓
-RECOVERY / REPLAN
-  ↓
-COMPLETE ONLY WHEN PROVEN
-```
+## Current execution stack
 
-### Implemented
+MISSION → DECOMPOSE → PLAN → SELECT → EXECUTE → OBSERVE → EVIDENCE → VERIFY → CRITIQUE → RECOVER
 
-- Mission contracts and acceptance criteria
-- Evidence-gated completion
-- Autonomous cycles
-- Runtime orchestration
-- Structured task decomposition
-- Dependency graphs
-- Strategy selection
-- Tool routing
-- Terminal execution boundary
-- Workspace containment
-- Append-only ledger
-- Evidence store
-- Failure fingerprinting and bounded recovery
-- Adversarial critic
-- Quality gates
-- Persistent mission state
-- Provider-independent intelligence interface
+## New cognitive stack
 
-### Tests
+MEMORY → HYPOTHESES → EXPERIMENTS → SKILLS → METACOGNITION → TRANSFER EVALUATION
+
+### Implemented cognitive subsystems
+
+- Working memory
+- Episodic mission memory
+- Semantic knowledge memory
+- Cross-store recall
+- Competing hypothesis tracking
+- Evidence-driven confidence updates
+- Experiment specifications
+- Reusable skill library
+- Skill reliability tracking
+- Explicit uncertainty assessment
+
+## Capability roadmap
+
+The project distinguishes:
+
+1. Tool agent
+2. Generalist autonomous agent
+3. Adaptive learning agent
+4. AGI research target
+5. ASI research target
+
+Capability claims require reproducible evidence and benchmarks.
+
+See `docs/AGI_ASI_SCOPE.md`.
+
+## Tests
 
 ```bash
 python -m unittest discover -s tests -v
 ```
 
-### Next engineering work
+## Current engineering objective
 
-The next major integration target is connecting the existing subsystems into a single end-to-end runtime capable of receiving a structured mission, selecting executable actions, running them, collecting evidence, and recovering from failures without falsely declaring completion.
+Integrate the execution runtime and cognitive systems into one closed-loop architecture where experience can improve future mission selection, planning, experimentation and verification.
