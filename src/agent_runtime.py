@@ -41,6 +41,39 @@ class AgentRuntime:
         self.loop.kernel.mission = restored
         return True
 
+    def _emit_lifecycle(self, result: dict, mission_id: str, cycle: int) -> None:
+        action_id = result.get("action")
+        if not action_id:
+            return
+        action = next((item for item in self.loop.kernel.mission.actions if item.id == action_id), None)
+        payload = {
+            "mission_id": mission_id,
+            "cycle": cycle,
+            "action_id": action_id,
+            "description": result.get("description", action.description if action else ""),
+            "criterion_ids": list(result.get("criterion_ids", action.criterion_ids if action else [])),
+            "depends_on": list(result.get("depends_on", action.depends_on if action else [])),
+        }
+        self.ledger.append("action.created", "action selected", **payload)
+        if action is not None and action.status.value == "RUNNING":
+            self.ledger.append("action.started", "action execution started", **payload)
+        elif result.get("state") in {"PROGRESS", "COMPLETE"}:
+            self.ledger.append("action.started", "action execution started", **payload)
+        if result.get("observation"):
+            self.ledger.append("observation.created", "execution observation", **payload, observation=result["observation"])
+        verification = result.get("verification")
+        if verification:
+            self.ledger.append("verification.started", "independent proof check", **payload)
+            if verification == "PASSED":
+                self.ledger.append("verification.completed", "independent proof accepted", **payload, evidence=list(result.get("evidence", [])))
+            else:
+                self.ledger.append("verification.failed", "independent proof rejected", **payload, evidence=list(result.get("evidence", [])))
+        state = result.get("state")
+        if state in {"PROGRESS", "COMPLETE"}:
+            self.ledger.append("action.completed", state, **payload, result=result)
+        elif state in {"RECOVER", "BLOCKED"}:
+            self.ledger.append("action.failed", state, **payload, observation=result.get("observation", result.get("reason", "")), result=result)
+
     def _recover(self, result: dict, mission_id: str, cycle: int) -> RecoveryPlan:
         if result.get("state") not in {"RECOVER", "BLOCKED"}:
             return RecoveryPlan()
@@ -63,18 +96,6 @@ class AgentRuntime:
         )
         return plan
 
-    def _record_action_event(self, result: dict, mission_id: str, cycle: int) -> None:
-        action_id = result.get("action")
-        if not action_id:
-            return
-        state = result.get("state", "UNKNOWN")
-        if state in {"READY", "PROGRESS", "COMPLETE"}:
-            self.ledger.append("action.completed", state, mission_id=mission_id, cycle=cycle, action_id=action_id, result=result)
-        elif state in {"RECOVER", "BLOCKED"}:
-            self.ledger.append("action.failed", state, mission_id=mission_id, cycle=cycle, action_id=action_id, observation=result.get("observation", result.get("reason", "")), result=result)
-        else:
-            self.ledger.append("action.state", state, mission_id=mission_id, cycle=cycle, action_id=action_id, result=result)
-
     def run(self, mission_id: str, maximum_cycles: int = 100) -> AgentRunResult:
         if maximum_cycles < 1:
             raise ValueError("maximum_cycles must be positive")
@@ -85,7 +106,7 @@ class AgentRuntime:
             result = self.loop.cycle()
             state = result["state"]
             self.ledger.append("agent_cycle", state, mission_id=mission_id, cycle=cycle)
-            self._record_action_event(result, mission_id, cycle)
+            self._emit_lifecycle(result, mission_id, cycle)
             recovery = self._recover(result, mission_id, cycle)
             if recovery.hypotheses:
                 result["recovery_hypotheses"] = [h.__dict__ for h in recovery.hypotheses]
