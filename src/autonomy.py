@@ -100,8 +100,9 @@ class AutonomousLoop:
         action = Action(id=f"A{len(self.kernel.mission.actions) + 1}", description=proposal.description, criterion_ids=proposal.criterion_ids, depends_on=list(proposal.depends_on or []), status=Status.READY)
         proposal.action_id = action.id
         self.kernel.mission.actions.append(action)
+        base = {"action": action.id, "description": action.description, "criterion_ids": list(action.criterion_ids), "depends_on": list(action.depends_on), "plan_score": plan.score, "plan_size": len(plan.actions), "alternative_plans": len(alternatives), "gaps": gaps}
         if self.executor is None:
-            return {"state": "READY", "action": action.id, "description": action.description, "plan_score": plan.score, "plan_size": len(plan.actions), "alternative_plans": len(alternatives), "gaps": gaps, "report": report}
+            return {"state": "READY", **base, "report": report}
         action.status = Status.RUNNING
         try:
             success, observation, evidence = self.executor(proposal)
@@ -122,11 +123,11 @@ class AutonomousLoop:
                         self.kernel.add_evidence(criterion_id, item)
                 complete, report = self._completion()
                 self.recovery_hypotheses = []
-                return {"state": "COMPLETE" if complete else "PROGRESS", "action": action.id, "complete": complete, "plan_score": plan.score, "plan_size": len(plan.actions), "alternative_plans": len(alternatives), "report": report}
+                return {"state": "COMPLETE" if complete else "PROGRESS", **base, "observation": observation, "evidence": list(evidence), "verification": "PASSED", "complete": complete, "report": report}
         action.status = Status.FAILED
         self.failed_descriptions.add(proposal.description)
         retry = self.recovery.should_retry(action.id, observation)
-        return {"state": "RECOVER" if retry else "BLOCKED", "action": action.id, "observation": observation, "retry_allowed": retry, "replan_required": True, "alternative_plans": len(alternatives), "gaps": self.kernel.gaps(), "report": self.kernel.report()}
+        return {"state": "RECOVER" if retry else "BLOCKED", **base, "observation": observation, "evidence": list(evidence), "verification": "FAILED", "retry_allowed": retry, "replan_required": True, "gaps": self.kernel.gaps(), "report": self.kernel.report()}
 
     def run(self, maximum_cycles: int = 100) -> dict:
         if maximum_cycles < 1:
