@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable
-from .autonomy import AutonomousLoop, ProposedAction, Strategist
-from .kernel import OutcomeKernel
+from typing import Any
+
+from .autonomy import AutonomousLoop
 from .ledger import Ledger
-from .quality import QualityController, QualityGate
+
 
 @dataclass
 class RuntimeEvent:
@@ -13,20 +13,26 @@ class RuntimeEvent:
     state: str
     detail: str
 
+
 class Runtime:
-    """Durable orchestration shell around the autonomous loop."""
+    """Orchestration shell that can resume from a previously consumed cycle budget."""
 
     def __init__(self, loop: AutonomousLoop, ledger: Ledger | None = None):
         self.loop = loop
         self.ledger = ledger or Ledger()
 
-    def run(self, maximum_cycles: int = 100) -> dict:
+    def _completed_cycles(self) -> int:
+        return sum(1 for entry in self.ledger.entries if entry.category == "cycle")
+
+    def run(self, maximum_cycles: int = 100) -> dict[str, Any]:
         events: list[RuntimeEvent] = []
-        for cycle in range(1, maximum_cycles + 1):
+        start = self._completed_cycles() + 1
+        for cycle in range(start, maximum_cycles + 1):
             result = self.loop.cycle()
             state = result["state"]
             detail = result.get("description") or result.get("reason") or result.get("action", "")
-            events.append(RuntimeEvent(cycle, state, str(detail)))
+            event = RuntimeEvent(cycle, state, str(detail))
+            events.append(event)
             self.ledger.append("cycle", state, cycle=cycle, result=result)
 
             if state == "COMPLETE":
