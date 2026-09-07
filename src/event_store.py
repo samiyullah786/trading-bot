@@ -9,12 +9,11 @@ import re
 import time
 from typing import Any, Iterable
 
-
 _SECRET_KEY = re.compile(r"(password|passwd|secret|token|api[_-]?key|authorization|cookie|private[_-]?key)", re.I)
 _SECRET_VALUE = re.compile(r"(?i)\b(?:bearer\s+)?[A-Za-z0-9_\-]{24,}\b")
 _MAX_STRING = 4096
 _MAX_PAYLOAD_BYTES = 64 * 1024
-
+_MAX_EVENTS = 1_000_000
 
 @dataclass(frozen=True)
 class Event:
@@ -25,10 +24,8 @@ class Event:
     previous_hash: str
     hash: str
 
-
 class EventStore:
     """Dependency-free durable append-only event log with integrity controls."""
-
     def __init__(self, path: str | Path):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -48,8 +45,7 @@ class EventStore:
         if isinstance(value, (list, tuple)):
             return [cls._sanitize(v) for v in value]
         if isinstance(value, str):
-            value = value[:_MAX_STRING]
-            return _SECRET_VALUE.sub("[REDACTED]", value)
+            return _SECRET_VALUE.sub("[REDACTED]", value[:_MAX_STRING])
         if isinstance(value, (str, int, float, bool)) or value is None:
             return value
         return str(value)[:_MAX_STRING]
@@ -76,6 +72,8 @@ class EventStore:
                     events.append(Event(**data))
                 except (TypeError, ValueError, json.JSONDecodeError) as exc:
                     raise ValueError(f"invalid event at line {line_number}") from exc
+                if len(events) > _MAX_EVENTS:
+                    raise ValueError("event store exceeds safety event limit")
         return events
 
     def append(self, event_type: str, payload: dict[str, Any] | None = None) -> Event:
