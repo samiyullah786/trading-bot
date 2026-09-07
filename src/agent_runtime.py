@@ -52,8 +52,28 @@ class AgentRuntime:
             "attempt": cycle,
         })
         self.loop.apply_recovery(plan)
-        self.ledger.append("recovery.plan", f"generated {len(plan.hypotheses)} recovery hypotheses", mission_id=mission_id, cycle=cycle)
+        self.ledger.append(
+            "recovery.plan",
+            f"generated {len(plan.hypotheses)} recovery hypotheses",
+            mission_id=mission_id,
+            cycle=cycle,
+            action_id=result.get("action"),
+            observation=observation,
+            strategies=[h.strategy for h in plan.hypotheses],
+        )
         return plan
+
+    def _record_action_event(self, result: dict, mission_id: str, cycle: int) -> None:
+        action_id = result.get("action")
+        if not action_id:
+            return
+        state = result.get("state", "UNKNOWN")
+        if state in {"READY", "PROGRESS", "COMPLETE"}:
+            self.ledger.append("action.completed", state, mission_id=mission_id, cycle=cycle, action_id=action_id, result=result)
+        elif state in {"RECOVER", "BLOCKED"}:
+            self.ledger.append("action.failed", state, mission_id=mission_id, cycle=cycle, action_id=action_id, observation=result.get("observation", result.get("reason", "")), result=result)
+        else:
+            self.ledger.append("action.state", state, mission_id=mission_id, cycle=cycle, action_id=action_id, result=result)
 
     def run(self, mission_id: str, maximum_cycles: int = 100) -> AgentRunResult:
         if maximum_cycles < 1:
@@ -65,6 +85,7 @@ class AgentRuntime:
             result = self.loop.cycle()
             state = result["state"]
             self.ledger.append("agent_cycle", state, mission_id=mission_id, cycle=cycle)
+            self._record_action_event(result, mission_id, cycle)
             recovery = self._recover(result, mission_id, cycle)
             if recovery.hypotheses:
                 result["recovery_hypotheses"] = [h.__dict__ for h in recovery.hypotheses]
