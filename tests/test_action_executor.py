@@ -9,9 +9,15 @@ from src.execution import TerminalExecutor
 class Tests(unittest.TestCase):
     def test_success(self):
         with tempfile.TemporaryDirectory() as directory:
-            ok, _, evidence = ActionExecutor(TerminalExecutor(directory))(
-                ProposedAction("x", ["R1"], ["python", "-c", "print('ok')"])
+            terminal = TerminalExecutor(directory)
+            executor = ActionExecutor(terminal, IndependentCommandVerifier(terminal))
+            action = ProposedAction(
+                "x",
+                ["R1"],
+                ["python", "-c", "print('ok')"],
+                verification_command=["python", "-c", "print('verified')"],
             )
+            ok, _, evidence = executor(action)
             self.assertTrue(ok)
             self.assertTrue(evidence)
 
