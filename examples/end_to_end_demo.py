@@ -6,7 +6,7 @@ sys.path.insert(0, str(ROOT))
 
 from src.domain import Criterion, Mission
 from src.execution import TerminalExecutor
-from src.action_executor import ActionExecutor
+from src.action_executor import ActionExecutor, IndependentCommandVerifier
 from src.agent_controller import AgentController
 from src.demo_provider import DeterministicMissionProvider
 from src.mission_executor import EndToEndMissionExecutor
@@ -24,10 +24,10 @@ provider = DeterministicMissionProvider({
     "R1": ["python", "-c", "print('R1 verified')"],
     "R2": ["python", "-c", "print('R2 evidence recorded')"],
 })
-
+terminal = TerminalExecutor(workspace)
 runner = EndToEndMissionExecutor(
     AgentController(provider),
-    ActionExecutor(TerminalExecutor(workspace)),
+    ActionExecutor(terminal, IndependentCommandVerifier(terminal)),
 )
 
 result = runner.execute(mission, maximum_cycles=10)
