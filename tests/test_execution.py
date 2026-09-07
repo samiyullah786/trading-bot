@@ -17,11 +17,20 @@ class ExecutionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             profile = SecurityProfile(timeout_seconds=0.1)
             result = TerminalExecutor(directory, profile=profile).run(
-                [sys.executable, "-c", "import time; time.sleep(2)"]
+                [sys.executable, "-c", "import time; print('partial'); time.sleep(2)"]
             )
             self.assertFalse(result.success)
             self.assertTrue(result.timed_out)
             self.assertIn("TIMEOUT", result.stderr)
+
+    def test_timeout_byte_output_is_preserved(self):
+        with tempfile.TemporaryDirectory() as directory:
+            profile = SecurityProfile(timeout_seconds=0.1)
+            result = TerminalExecutor(directory, profile=profile).run(
+                [sys.executable, "-c", "import sys,time; sys.stdout.write('partial'); sys.stdout.flush(); time.sleep(2)"]
+            )
+            self.assertTrue(result.timed_out)
+            self.assertIn("partial", result.stdout)
 
     def test_output_is_truncated(self):
         with tempfile.TemporaryDirectory() as directory:
