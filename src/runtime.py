@@ -22,7 +22,7 @@ class Runtime:
         self.ledger = ledger or Ledger()
 
     def _completed_cycles(self) -> int:
-        return sum(1 for entry in self.ledger.entries if entry.category == "cycle")
+        return sum(1 for entry in self.ledger.entries if entry.kind == "cycle")
 
     def run(self, maximum_cycles: int = 100) -> dict[str, Any]:
         events: list[RuntimeEvent] = []
