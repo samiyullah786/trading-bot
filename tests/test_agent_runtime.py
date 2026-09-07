@@ -2,13 +2,14 @@ import tempfile
 import unittest
 
 from src.agent_runtime import AgentRuntime
-from src.autonomy import AutonomousLoop, DeterministicStrategist
+from src.autonomy import AutonomousLoop, DeterministicStrategist, ProposedAction
 from src.checkpoint import CheckpointStore
 from src.domain import Criterion, Mission
 from src.kernel import OutcomeKernel
 from src.learning import LearningController
 from src.memory import CognitiveMemory
 from src.skills import SkillLibrary
+from src.ledger import Ledger
 
 
 class AgentRuntimeTests(unittest.TestCase):
@@ -24,12 +25,7 @@ class AgentRuntimeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             checkpoints = CheckpointStore(directory)
             loop = AutonomousLoop(OutcomeKernel(mission), DeterministicStrategist())
-            agent = AgentRuntime(
-                loop,
-                CognitiveMemory(),
-                LearningController(SkillLibrary()),
-                checkpoints=checkpoints,
-            )
+            agent = AgentRuntime(loop, CognitiveMemory(), LearningController(SkillLibrary()), checkpoints=checkpoints)
             result = agent.run(mission.id, maximum_cycles=1)
             self.assertEqual(result.state, "PAUSED")
             restored = checkpoints.load(mission.id)
@@ -39,15 +35,30 @@ class AgentRuntimeTests(unittest.TestCase):
 
             replacement = Mission.create("different", [Criterion("X", "other")])
             replacement_loop = AutonomousLoop(OutcomeKernel(replacement), DeterministicStrategist())
-            resumed = AgentRuntime(
-                replacement_loop,
-                CognitiveMemory(),
-                LearningController(SkillLibrary()),
-                checkpoints=checkpoints,
-            )
+            resumed = AgentRuntime(replacement_loop, CognitiveMemory(), LearningController(SkillLibrary()), checkpoints=checkpoints)
             self.assertTrue(resumed.restore_checkpoint(mission.id))
             self.assertEqual(resumed.loop.kernel.mission.id, mission.id)
             self.assertEqual(resumed.loop.kernel.mission.criteria[0].id, "R1")
+
+    def test_action_lifecycle_is_recorded(self):
+        mission = Mission.create("build", [Criterion("R1", "works")])
+
+        class Strategist:
+            def propose(self, _mission, gaps):
+                yield ProposedAction("finish", list(gaps), expected_observation="proof")
+
+        def executor(_action):
+            return True, "done", ["independent proof"]
+
+        ledger = Ledger()
+        loop = AutonomousLoop(OutcomeKernel(mission), Strategist(), executor=executor)
+        agent = AgentRuntime(loop, CognitiveMemory(), LearningController(SkillLibrary()), ledger=ledger)
+        result = agent.run(mission.id, maximum_cycles=2)
+
+        self.assertEqual(result.state, "COMPLETE")
+        lifecycle = [entry for entry in ledger.entries if entry.kind == "action.completed"]
+        self.assertEqual(len(lifecycle), 1)
+        self.assertEqual(lifecycle[0].data["action_id"], "A1")
 
 
 if __name__ == "__main__":
