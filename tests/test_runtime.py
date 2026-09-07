@@ -19,7 +19,7 @@ class RuntimeTests(unittest.TestCase):
         runtime = Runtime(loop)
         runtime.run(maximum_cycles=1)
         runtime.run(maximum_cycles=2)
-        cycles = [entry.data["cycle"] for entry in runtime.ledger.entries if entry.category == "cycle"]
+        cycles = [entry.data["cycle"] for entry in runtime.ledger.entries if entry.kind == "cycle"]
         self.assertEqual(cycles, sorted(cycles))
         self.assertEqual(len(set(cycles)), len(cycles))
 
