@@ -25,15 +25,18 @@ class IndependentCommandVerifier:
 
 
 class ActionExecutor:
-    """Bridge proposed actions to execution and optional independent verification."""
+    """Execute an action and require independent proof when configured."""
 
     def __init__(
         self,
         terminal: TerminalExecutor,
         verifier: Callable[[ProposedAction], tuple[bool, str]] | None = None,
+        *,
+        require_verification: bool = True,
     ):
         self.terminal = terminal
         self.verifier = verifier
+        self.require_verification = require_verification
 
     def __call__(self, action: ProposedAction) -> tuple[bool, str, list[str]]:
         if not action.command:
@@ -46,11 +49,13 @@ class ActionExecutor:
         if not result.success:
             return False, observation, []
 
-        if self.verifier is not None:
-            verified, verification_observation = self.verifier(action)
-            observation = f"{observation}; {verification_observation}"
-            if not verified:
-                return False, observation, []
-            return True, observation, [verification_observation]
+        if self.verifier is None:
+            if self.require_verification:
+                return False, f"{observation}; INDEPENDENT_VERIFICATION_REQUIRED", []
+            return True, observation, [observation]
 
-        return True, observation, [observation]
+        verified, verification_observation = self.verifier(action)
+        observation = f"{observation}; {verification_observation}"
+        if not verified:
+            return False, observation, []
+        return True, observation, [verification_observation]
