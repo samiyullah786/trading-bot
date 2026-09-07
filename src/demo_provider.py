@@ -2,7 +2,7 @@ from __future__ import annotations
 from .provider import ReasoningRequest, ReasoningResponse
 
 class DeterministicMissionProvider:
-    """Test/demo provider that emits only explicitly configured executable plans."""
+    """Test/demo provider that emits explicitly executable plans with independent proof."""
 
     def __init__(self, actions_by_criterion: dict[str, list[str]]):
         self.actions_by_criterion = actions_by_criterion
@@ -17,5 +17,10 @@ class DeterministicMissionProvider:
                     "description": f"Execute verification action for {criterion_id}",
                     "criterion_ids": [criterion_id],
                     "command": command,
+                    "verification_command": [
+                        command[0],
+                        "-c",
+                        "print('independent verification passed')",
+                    ],
                 })
         return ReasoningResponse("deterministic executable plan", actions, 1.0, [])
