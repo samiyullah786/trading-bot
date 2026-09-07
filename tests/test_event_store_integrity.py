@@ -32,6 +32,28 @@ class EventStoreIntegrityTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 store.verify()
 
+    def test_corrupted_json_fails_closed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "events.jsonl"
+            store = EventStore(path)
+            store.append("one")
+            with path.open("a", encoding="utf-8") as handle:
+                handle.write("{not-json}\n")
+            with self.assertRaises(ValueError):
+                list(store.replay())
+
+    def test_append_refuses_corrupted_existing_history(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "events.jsonl"
+            store = EventStore(path)
+            store.append("one")
+            lines = path.read_text(encoding="utf-8").splitlines()
+            event = json.loads(lines[0])
+            event["event_type"] = "tampered"
+            path.write_text(json.dumps(event) + "\n", encoding="utf-8")
+            with self.assertRaises(ValueError):
+                store.append("two")
+
     def test_secret_is_not_persisted(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "events.jsonl"
