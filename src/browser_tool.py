@@ -5,7 +5,7 @@ from .tools import ToolRequest, ToolResult
 
 
 class BrowserTool:
-    """ToolRegistry adapter exposing bounded browser operations through CDP."""
+    """Dependency-free browser tool with navigation, inspection and interaction."""
 
     name = "browser"
 
@@ -21,7 +21,22 @@ class BrowserTool:
                 return ToolResult(True, "navigation requested", [f"browser.loader_id={result.get('loaderId', '')}"], {"operation": operation})
             if operation == "evaluate":
                 value = self.cdp.evaluate(target, request.payload["expression"])
-                return ToolResult(True, "evaluation completed", [f"browser.value={value!r}"], {"operation": operation, "value": value})
+                return ToolResult(True, "evaluation completed", [f"browser.value={str(value)[:8000]!r}"], {"operation": operation, "value": value})
+            if operation == "click":
+                value = self.cdp.click(target, request.payload["selector"])
+                return ToolResult(True, "element clicked", [f"browser.click={value!r}"], {"operation": operation})
+            if operation == "focus":
+                self.cdp.focus(target, request.payload["selector"])
+                return ToolResult(True, "element focused", ["browser.focus=ok"], {"operation": operation})
+            if operation == "type":
+                value = self.cdp.type_text(target, request.payload["text"])
+                return ToolResult(True, "text inserted", [f"browser.type={value}"], {"operation": operation})
+            if operation == "key":
+                value = self.cdp.press_key(target, request.payload["key"])
+                return ToolResult(True, "key dispatched", [f"browser.key={value}"], {"operation": operation})
+            if operation == "read":
+                value = self.cdp.page_text(target, int(request.payload.get("max_chars", 20000)))
+                return ToolResult(True, "page text read", [f"browser.text={value[:12000]!r}"], {"operation": operation})
             if operation == "screenshot":
                 data = self.cdp.screenshot_png(target)
                 return ToolResult(True, f"screenshot captured ({len(data)} bytes)", [f"browser.screenshot_bytes={len(data)}"], {"operation": operation})
