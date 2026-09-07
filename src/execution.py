@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 import os
 import shutil
+import signal
 import subprocess
 import time
 
@@ -23,7 +24,7 @@ class ExecutionResult:
 
 
 class TerminalExecutor:
-    """Fail-closed subprocess boundary with strict workspace and process limits."""
+    """Fail-closed subprocess boundary with timeout, output and process-tree limits."""
 
     name = "terminal"
 
@@ -50,12 +51,26 @@ class TerminalExecutor:
         clean = encoded.decode("utf-8", errors="ignore")
         return self.redactor.redact(clean, self.secrets), truncated
 
+    @staticmethod
+    def _terminate_process_tree(process: subprocess.Popen) -> None:
+        if os.name == "posix":
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+                return
+            except (ProcessLookupError, PermissionError):
+                pass
+        try:
+            process.kill()
+        except ProcessLookupError:
+            pass
+
     def _preexec(self):
         if os.name != "posix":
             return None
         import resource
         file_limit = max(self.profile.max_output_bytes * 4, 1_000_000)
         def apply_limits():
+            os.setsid()
             resource.setrlimit(resource.RLIMIT_FSIZE, (file_limit, file_limit))
             resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
         return apply_limits
@@ -71,23 +86,27 @@ class TerminalExecutor:
         if shutil.which(command[0]) is None and not Path(command[0]).is_absolute():
             return ExecutionResult(False, "", f"executable not found: {command[0]}", 127,
                                    time.monotonic() - started, list(command))
+        process = None
         try:
-            completed = subprocess.run(
-                command, cwd=self.workspace, capture_output=True, text=False,
-                timeout=effective_timeout, shell=False, env=self.env_filter.build(),
-                preexec_fn=self._preexec(),
+            process = subprocess.Popen(
+                command, cwd=self.workspace, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                text=False, shell=False, env=self.env_filter.build(), preexec_fn=self._preexec(),
             )
-            stdout, out_truncated = self._bound(completed.stdout)
-            stderr, err_truncated = self._bound(completed.stderr)
-            return ExecutionResult(completed.returncode == 0, stdout, stderr,
-                                   completed.returncode, time.monotonic() - started,
-                                   list(command), out_truncated or err_truncated)
-        except subprocess.TimeoutExpired as exc:
-            stdout, out_truncated = self._bound(exc.stdout)
-            stderr, err_truncated = self._bound(exc.stderr)
-            return ExecutionResult(False, stdout, (stderr + "\nTIMEOUT").strip(), -1,
+            try:
+                stdout_raw, stderr_raw = process.communicate(timeout=effective_timeout)
+            except subprocess.TimeoutExpired as exc:
+                self._terminate_process_tree(process)
+                stdout_raw, stderr_raw = process.communicate()
+                stdout, out_truncated = self._bound(stdout_raw or exc.stdout)
+                stderr, err_truncated = self._bound(stderr_raw or exc.stderr)
+                return ExecutionResult(False, stdout, (stderr + "\nTIMEOUT").strip(), -1,
+                                       time.monotonic() - started, list(command),
+                                       out_truncated or err_truncated, True)
+            stdout, out_truncated = self._bound(stdout_raw)
+            stderr, err_truncated = self._bound(stderr_raw)
+            return ExecutionResult(process.returncode == 0, stdout, stderr, process.returncode,
                                    time.monotonic() - started, list(command),
-                                   out_truncated or err_truncated, True)
+                                   out_truncated or err_truncated)
         except OSError as exc:
             return ExecutionResult(False, "", f"EXECUTION_OS_ERROR:{type(exc).__name__}",
                                    -1, time.monotonic() - started, list(command))
