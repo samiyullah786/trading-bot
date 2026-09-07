@@ -15,6 +15,7 @@ _MAX_STRING = 4096
 _MAX_PAYLOAD_BYTES = 64 * 1024
 _MAX_EVENTS = 1_000_000
 
+
 @dataclass(frozen=True)
 class Event:
     sequence: int
@@ -24,17 +25,29 @@ class Event:
     previous_hash: str
     hash: str
 
+
 class EventStore:
     """Dependency-free durable append-only event log with integrity controls."""
+
     def __init__(self, path: str | Path):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
 
     @staticmethod
-    def _canonical(sequence: int, event_type: str, payload: dict[str, Any], timestamp: float, previous_hash: str) -> bytes:
-        return json.dumps({"sequence": sequence, "event_type": event_type, "payload": payload,
-                           "timestamp": timestamp, "previous_hash": previous_hash},
-                          sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    def _canonical(sequence: int, event_type: str, payload: dict[str, Any],
+                   timestamp: float, previous_hash: str) -> bytes:
+        return json.dumps(
+            {
+                "sequence": sequence,
+                "event_type": event_type,
+                "payload": payload,
+                "timestamp": timestamp,
+                "previous_hash": previous_hash,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        ).encode("utf-8")
 
     @classmethod
     def _sanitize(cls, value: Any, key: str | None = None) -> Any:
@@ -52,12 +65,21 @@ class EventStore:
 
     @classmethod
     def _bounded_payload(cls, payload: dict[str, Any]) -> dict[str, Any]:
-        sanitized = cls._sanitize(dict(payload))
-        encoded = json.dumps(sanitized, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
-        if len(encoded) <= _MAX_PAYLOAD_BYTES:
-            return sanitized
-        return {"_payload_truncated": True, "_payload_sha256": hashlib.sha256(encoded).hexdigest(),
-                "_payload_size": len(encoded)}
+        original = dict(payload)
+        original_encoded = json.dumps(
+            original, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str
+        ).encode("utf-8")
+        sanitized = cls._sanitize(original)
+        encoded = json.dumps(
+            sanitized, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        ).encode("utf-8")
+        if len(original_encoded) > _MAX_PAYLOAD_BYTES or len(encoded) > _MAX_PAYLOAD_BYTES:
+            return {
+                "_payload_truncated": True,
+                "_payload_sha256": hashlib.sha256(original_encoded).hexdigest(),
+                "_payload_size": len(original_encoded),
+            }
+        return sanitized
 
     def _read(self) -> list[Event]:
         if not self.path.exists():
@@ -86,9 +108,13 @@ class EventStore:
         sequence = len(existing) + 1
         previous_hash = existing[-1].hash if existing else "0" * 64
         timestamp = time.time()
-        digest = hashlib.sha256(self._canonical(sequence, event_type, payload, timestamp, previous_hash)).hexdigest()
+        digest = hashlib.sha256(
+            self._canonical(sequence, event_type, payload, timestamp, previous_hash)
+        ).hexdigest()
         event = Event(sequence, event_type, payload, timestamp, previous_hash, digest)
-        encoded = json.dumps(asdict(event), sort_keys=True, separators=(",", ":"), ensure_ascii=False) + "\n"
+        encoded = json.dumps(
+            asdict(event), sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        ) + "\n"
         with self.path.open("a", encoding="utf-8") as handle:
             handle.write(encoded)
             handle.flush()
@@ -110,14 +136,23 @@ class EventStore:
                 raise ValueError("event sequence is not contiguous")
             if event.previous_hash != previous:
                 raise ValueError(f"broken event chain at sequence {event.sequence}")
-            expected_hash = hashlib.sha256(self._canonical(event.sequence, event.event_type,
-                                                           event.payload, event.timestamp,
-                                                           event.previous_hash)).hexdigest()
+            expected_hash = hashlib.sha256(
+                self._canonical(
+                    event.sequence,
+                    event.event_type,
+                    event.payload,
+                    event.timestamp,
+                    event.previous_hash,
+                )
+            ).hexdigest()
             if event.hash != expected_hash:
                 raise ValueError(f"event integrity failure at sequence {event.sequence}")
             previous = event.hash
 
     def snapshot(self) -> dict[str, Any]:
         events = self.events()
-        return {"count": len(events), "last_sequence": events[-1].sequence if events else 0,
-                "last_hash": events[-1].hash if events else "0" * 64}
+        return {
+            "count": len(events),
+            "last_sequence": events[-1].sequence if events else 0,
+            "last_hash": events[-1].hash if events else "0" * 64,
+        }
