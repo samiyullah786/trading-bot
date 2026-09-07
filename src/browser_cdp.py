@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import base64
-import hashlib
 import json
 import os
 import socket
@@ -25,7 +24,7 @@ class CdpProtocolError(RuntimeError):
 
 
 class ChromeDevTools:
-    """Dependency-free CDP client with target selection and lifecycle primitives."""
+    """Dependency-free CDP client with bounded browser interaction primitives."""
 
     def __init__(self, endpoint: str = "http://127.0.0.1:9222", timeout: float = 15.0):
         parsed = urlparse(endpoint)
@@ -81,8 +80,7 @@ class ChromeDevTools:
             header += chunk
             if len(header) > 65536:
                 raise CdpProtocolError("invalid websocket handshake")
-        first_line = header.split(b"\r\n", 1)[0]
-        if b" 101 " not in first_line:
+        if b" 101 " not in header.split(b"\r\n", 1)[0]:
             raise CdpProtocolError("CDP websocket handshake failed")
         return sock
 
@@ -146,17 +144,46 @@ class ChromeDevTools:
             sock.close()
 
     def navigate(self, target: CdpTarget, url: str) -> dict:
-        parsed = urlparse(url)
-        if parsed.scheme not in {"http", "https"}:
+        if urlparse(url).scheme not in {"http", "https"}:
             raise ValueError("browser navigation requires http(s)")
         return self.command(target, "Page.navigate", {"url": url})
 
     def evaluate(self, target: CdpTarget, expression: str, return_by_value: bool = True) -> object:
         result = self.command(target, "Runtime.evaluate", {"expression": expression, "returnByValue": return_by_value, "awaitPromise": True})
         remote = result.get("result", {})
-        if remote.get("subtype") == "error":
+        if remote.get("subtype") == "error" or remote.get("type") == "error":
             raise CdpProtocolError(remote.get("description", "JavaScript evaluation failed"))
         return remote.get("value", remote.get("description"))
+
+    def click(self, target: CdpTarget, selector: str) -> object:
+        if not selector or len(selector) > 4096:
+            raise ValueError("selector must be non-empty and bounded")
+        expression = "(() => { const e=document.querySelector(%s); if(!e) throw new Error('element not found'); e.scrollIntoView({block:'center'}); e.click(); return {tag:e.tagName,text:(e.innerText||'').slice(0,1000)}; })()" % json.dumps(selector)
+        return self.evaluate(target, expression)
+
+    def focus(self, target: CdpTarget, selector: str) -> object:
+        if not selector or len(selector) > 4096:
+            raise ValueError("selector must be non-empty and bounded")
+        expression = "(() => { const e=document.querySelector(%s); if(!e) throw new Error('element not found'); e.focus(); return true; })()" % json.dumps(selector)
+        return self.evaluate(target, expression)
+
+    def type_text(self, target: CdpTarget, text: str) -> dict:
+        if len(text.encode("utf-8")) > 65536:
+            raise ValueError("text input too large")
+        self.command(target, "Input.insertText", {"text": text})
+        return {"inserted_bytes": len(text.encode("utf-8"))}
+
+    def press_key(self, target: CdpTarget, key: str) -> dict:
+        if not key or len(key) > 64:
+            raise ValueError("key must be bounded")
+        self.command(target, "Input.dispatchKeyEvent", {"type": "keyDown", "key": key})
+        self.command(target, "Input.dispatchKeyEvent", {"type": "keyUp", "key": key})
+        return {"key": key}
+
+    def page_text(self, target: CdpTarget, max_chars: int = 20000) -> str:
+        max_chars = max(1, min(max_chars, 200000))
+        value = self.evaluate(target, "document.body ? document.body.innerText : ''")
+        return str(value or "")[:max_chars]
 
     def screenshot_png(self, target: CdpTarget) -> bytes:
         result = self.command(target, "Page.captureScreenshot", {"format": "png"})
