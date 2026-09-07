@@ -8,6 +8,7 @@ from dataclasses import dataclass
 class SecurityProfile:
     timeout_seconds: float = 30.0
     max_output_bytes: int = 1_000_000
+    max_evidence_bytes: int = 8_000
     allow_network: bool = False
     inherit_environment: bool = False
     allowed_executables: frozenset[str] | None = None
@@ -54,3 +55,22 @@ class SecretRedactor:
             if secret:
                 output = output.replace(secret, "[REDACTED]")
         return output
+
+
+class EvidenceSanitizer:
+    """Bounds and sanitizes evidence before it enters durable mission state."""
+
+    def __init__(self, profile: SecurityProfile, redactor: SecretRedactor, secrets: list[str]):
+        self.limit = profile.max_evidence_bytes
+        if self.limit < 1:
+            raise ValueError("max_evidence_bytes must be positive")
+        self.redactor = redactor
+        self.secrets = secrets
+
+    def sanitize(self, evidence: str) -> str:
+        clean = self.redactor.redact(str(evidence), self.secrets)
+        raw = clean.encode("utf-8", errors="replace")
+        if len(raw) <= self.limit:
+            return clean
+        clipped = raw[: self.limit].decode("utf-8", errors="ignore")
+        return clipped + "\n[EVIDENCE_TRUNCATED]"
