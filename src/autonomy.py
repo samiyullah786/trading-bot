@@ -44,15 +44,16 @@ class DeterministicStrategist:
 
 
 class AutonomousLoop:
-    """Closed outcome loop with recovery-driven replanning."""
+    """Closed outcome loop with recovery-driven replanning and proof gates."""
 
-    def __init__(self, kernel: OutcomeKernel, strategist: Strategist, executor: Callable[[ProposedAction], tuple[bool, str, list[str]]] | None = None, critic: AdversarialCritic | None = None, planner: Planner | None = None):
+    def __init__(self, kernel: OutcomeKernel, strategist: Strategist, executor: Callable[[ProposedAction], tuple[bool, str, list[str]]] | None = None, critic: AdversarialCritic | None = None, planner: Planner | None = None, require_evidence: bool = True):
         self.kernel = kernel
         self.strategist = strategist
         self.executor = executor
         self.recovery = RecoveryEngine()
         self.critic = critic or AdversarialCritic()
         self.planner = planner or Planner()
+        self.require_evidence = require_evidence
         self.failed_descriptions: set[str] = set()
         self.recovery_hypotheses: list[object] = []
 
@@ -110,13 +111,18 @@ class AutonomousLoop:
         action.result = observation
         self.kernel.observe("executor", observation)
         if success:
-            action.status = Status.VERIFIED
-            for criterion_id in proposal.criterion_ids:
-                for item in evidence:
-                    self.kernel.add_evidence(criterion_id, item)
-            complete, report = self._completion()
-            self.recovery_hypotheses = []
-            return {"state": "COMPLETE" if complete else "PROGRESS", "action": action.id, "complete": complete, "plan_score": plan.score, "plan_size": len(plan.actions), "alternative_plans": len(alternatives), "report": report}
+            if self.require_evidence and not evidence:
+                success = False
+                observation = f"{observation}; EVIDENCE_REQUIRED"
+                action.result = observation
+            else:
+                action.status = Status.VERIFIED
+                for criterion_id in proposal.criterion_ids:
+                    for item in evidence:
+                        self.kernel.add_evidence(criterion_id, item)
+                complete, report = self._completion()
+                self.recovery_hypotheses = []
+                return {"state": "COMPLETE" if complete else "PROGRESS", "action": action.id, "complete": complete, "plan_score": plan.score, "plan_size": len(plan.actions), "alternative_plans": len(alternatives), "report": report}
         action.status = Status.FAILED
         self.failed_descriptions.add(proposal.description)
         retry = self.recovery.should_retry(action.id, observation)
