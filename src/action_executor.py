@@ -4,6 +4,7 @@ from collections.abc import Callable
 
 from .autonomy import ProposedAction
 from .execution import TerminalExecutor
+from .security import EvidenceSanitizer
 
 
 class IndependentCommandVerifier:
@@ -11,15 +12,18 @@ class IndependentCommandVerifier:
 
     def __init__(self, terminal: TerminalExecutor):
         self.terminal = terminal
+        self.sanitizer = EvidenceSanitizer(terminal.profile, terminal.redactor, terminal.secrets)
 
     def __call__(self, action: ProposedAction) -> tuple[bool, str]:
         command = getattr(action, "verification_command", None)
         if not command:
             return False, "NO_VERIFICATION_COMMAND"
-        result = self.terminal.run(command)
-        observation = (
-            f"verification_returncode={result.returncode}; "
-            f"stdout={result.stdout[-2000:]}; stderr={result.stderr[-2000:]}"
+        try:
+            result = self.terminal.run(command)
+        except Exception as exc:
+            return False, self.sanitizer.sanitize(f"VERIFICATION_EXCEPTION={type(exc).__name__}")
+        observation = self.sanitizer.sanitize(
+            f"verification_returncode={result.returncode}; stdout={result.stdout}; stderr={result.stderr}"
         )
         return result.success, observation
 
@@ -37,14 +41,17 @@ class ActionExecutor:
         self.terminal = terminal
         self.verifier = verifier
         self.require_verification = require_verification
+        self.sanitizer = EvidenceSanitizer(terminal.profile, terminal.redactor, terminal.secrets)
 
     def __call__(self, action: ProposedAction) -> tuple[bool, str, list[str]]:
         if not action.command:
             return False, "NO_EXECUTABLE_COMMAND", []
-        result = self.terminal.run(action.command)
-        observation = (
-            f"returncode={result.returncode}; stdout={result.stdout[-2000:]}; "
-            f"stderr={result.stderr[-2000:]}"
+        try:
+            result = self.terminal.run(action.command)
+        except Exception as exc:
+            return False, self.sanitizer.sanitize(f"EXECUTION_EXCEPTION={type(exc).__name__}"), []
+        observation = self.sanitizer.sanitize(
+            f"returncode={result.returncode}; stdout={result.stdout}; stderr={result.stderr}"
         )
         if not result.success:
             return False, observation, []
@@ -54,8 +61,12 @@ class ActionExecutor:
                 return False, f"{observation}; INDEPENDENT_VERIFICATION_REQUIRED", []
             return True, observation, [observation]
 
-        verified, verification_observation = self.verifier(action)
-        observation = f"{observation}; {verification_observation}"
+        try:
+            verified, verification_observation = self.verifier(action)
+        except Exception:
+            return False, f"{observation}; VERIFICATION_EXCEPTION", []
+        verification_observation = self.sanitizer.sanitize(verification_observation)
+        observation = self.sanitizer.sanitize(f"{observation}; {verification_observation}")
         if not verified:
             return False, observation, []
         return True, observation, [verification_observation]
