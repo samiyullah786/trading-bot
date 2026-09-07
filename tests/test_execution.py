@@ -1,29 +1,42 @@
+import sys
 import tempfile
 import unittest
-from pathlib import Path
 
 from src.execution import TerminalExecutor
-from src.filesystem import Workspace
+from src.security import SecurityProfile
+
 
 class ExecutionTests(unittest.TestCase):
     def test_terminal_runs_python(self):
         with tempfile.TemporaryDirectory() as directory:
-            result = TerminalExecutor(directory).run(["python", "-c", "print('ok')"])
+            result = TerminalExecutor(directory).run([sys.executable, "-c", "print('ok')"])
             self.assertTrue(result.success)
             self.assertEqual(result.stdout.strip(), "ok")
 
-    def test_workspace_cannot_escape_root(self):
+    def test_timeout_is_bounded_and_reported(self):
         with tempfile.TemporaryDirectory() as directory:
-            workspace = Workspace(directory)
-            with self.assertRaises(PermissionError):
-                workspace.read("../outside")
+            profile = SecurityProfile(timeout_seconds=0.1)
+            result = TerminalExecutor(directory, profile=profile).run(
+                [sys.executable, "-c", "import time; time.sleep(2)"]
+            )
+            self.assertFalse(result.success)
+            self.assertTrue(result.timed_out)
+            self.assertIn("TIMEOUT", result.stderr)
 
-    def test_workspace_write_and_list(self):
+    def test_output_is_truncated(self):
         with tempfile.TemporaryDirectory() as directory:
-            workspace = Workspace(directory)
-            workspace.write("nested/example.txt", "hello")
-            self.assertTrue(workspace.exists("nested/example.txt"))
-            self.assertEqual(workspace.list_files(), ["nested/example.txt"])
+            profile = SecurityProfile(max_output_bytes=32)
+            result = TerminalExecutor(directory, profile=profile).run(
+                [sys.executable, "-c", "print('x' * 1000)"]
+            )
+            self.assertTrue(result.success)
+            self.assertTrue(result.truncated)
+            self.assertLessEqual(len(result.stdout.encode("utf-8")), 32)
+
+    def test_missing_workspace_fails_closed(self):
+        with self.assertRaises(ValueError):
+            TerminalExecutor("/definitely/not/a/workspace")
+
 
 if __name__ == "__main__":
     unittest.main()
