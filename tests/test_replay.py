@@ -10,13 +10,35 @@ class ReplayTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             store = EventStore(f"{directory}/events.jsonl")
             store.append("agent_cycle", {"mission_id": "M1", "cycle": 1, "state": "PROGRESS"})
-            store.append("action.created", {"mission_id": "M1", "action_id": "A1"})
+            store.append("action.created", {
+                "mission_id": "M1", "action_id": "A1", "description": "build",
+                "criterion_ids": ["C1"], "depends_on": [],
+            })
+            store.append("action.started", {"mission_id": "M1", "action_id": "A1"})
+            store.append("observation.created", {"mission_id": "M1", "action_id": "A1", "observation": "ok"})
+            store.append("verification.completed", {"mission_id": "M1", "action_id": "A1", "evidence": ["test passed"]})
+            store.append("action.completed", {"mission_id": "M1", "action_id": "A1"})
             store.append("agent_cycle", {"mission_id": "M1", "cycle": 2, "state": "COMPLETE"})
             state = EventReplayer(store).verify_and_replay()
             self.assertEqual(state.mission_id, "M1")
             self.assertEqual(state.last_cycle, 2)
             self.assertEqual(state.state, "COMPLETE")
             self.assertEqual(state.actions, 1)
+            self.assertEqual(state.observations, 1)
+            self.assertEqual(state.action_states["A1"].status, "VERIFIED")
+            self.assertEqual(state.action_states["A1"].evidence, ("test passed",))
+            self.assertEqual(state.criteria["C1"].status, "VERIFIED")
+
+    def test_failed_action_is_reconstructed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = EventStore(f"{directory}/events.jsonl")
+            store.append("action.created", {"mission_id": "M2", "action_id": "A9", "description": "deploy", "criterion_ids": ["C9"]})
+            store.append("action.started", {"mission_id": "M2", "action_id": "A9"})
+            store.append("action.failed", {"mission_id": "M2", "action_id": "A9", "observation": "timeout"})
+            state = EventReplayer(store).verify_and_replay()
+            self.assertEqual(state.action_states["A9"].status, "FAILED")
+            self.assertEqual(state.action_states["A9"].attempts, 1)
+            self.assertEqual(state.action_states["A9"].observation, "timeout")
 
 
 if __name__ == "__main__":
