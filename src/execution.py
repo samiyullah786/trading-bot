@@ -18,15 +18,24 @@ class ExecutionResult:
     duration: float
     command: list[str]
     truncated: bool = False
+    timed_out: bool = False
 
 
 class TerminalExecutor:
-    """Standard-library execution boundary with bounded output, env hygiene and policy."""
+    """Fail-closed subprocess boundary with timeout, output and environment limits."""
 
     name = "terminal"
 
-    def __init__(self, workspace: str | Path, timeout: int = 120, profile: SecurityProfile | None = None, secrets: list[str] | None = None):
+    def __init__(
+        self,
+        workspace: str | Path,
+        timeout: int = 120,
+        profile: SecurityProfile | None = None,
+        secrets: list[str] | None = None,
+    ):
         self.workspace = Path(workspace).resolve()
+        if not self.workspace.exists() or not self.workspace.is_dir():
+            raise ValueError("workspace must be an existing directory")
         self.profile = profile or SecurityProfile(timeout_seconds=float(timeout))
         self.env_filter = EnvironmentFilter(self.profile)
         self.executable_policy = ExecutablePolicy(self.profile)
@@ -56,15 +65,44 @@ class TerminalExecutor:
         if effective_timeout <= 0:
             raise ValueError("timeout must be positive")
         if shutil.which(command[0]) is None and not Path(command[0]).is_absolute():
-            return ExecutionResult(False, "", f"executable not found: {command[0]}", 127, time.monotonic() - started, list(command))
+            return ExecutionResult(
+                False, "", f"executable not found: {command[0]}", 127,
+                time.monotonic() - started, list(command)
+            )
+
         try:
-            completed = subprocess.run(command, cwd=self.workspace, capture_output=True, text=True, timeout=effective_timeout, shell=False, env=self.env_filter.build())
+            completed = subprocess.run(
+                command,
+                cwd=self.workspace,
+                capture_output=True,
+                text=True,
+                timeout=effective_timeout,
+                shell=False,
+                env=self.env_filter.build(),
+            )
             stdout, out_truncated = self._bound(completed.stdout or "")
             stderr, err_truncated = self._bound(completed.stderr or "")
-            return ExecutionResult(completed.returncode == 0, stdout, stderr, completed.returncode, time.monotonic() - started, list(command), out_truncated or err_truncated)
+            return ExecutionResult(
+                completed.returncode == 0,
+                stdout,
+                stderr,
+                completed.returncode,
+                time.monotonic() - started,
+                list(command),
+                out_truncated or err_truncated,
+            )
         except subprocess.TimeoutExpired as exc:
-            stdout = exc.stdout or ""
-            stderr = exc.stderr or ""
-            stdout, out_truncated = self._bound(stdout if isinstance(stdout, str) else "")
-            stderr, err_truncated = self._bound(stderr if isinstance(stderr, str) else "")
-            return ExecutionResult(False, stdout, (stderr + "\nTIMEOUT").strip(), -1, time.monotonic() - started, list(command), out_truncated or err_truncated)
+            stdout_raw = exc.stdout if isinstance(exc.stdout, str) else ""
+            stderr_raw = exc.stderr if isinstance(exc.stderr, str) else ""
+            stdout, out_truncated = self._bound(stdout_raw)
+            stderr, err_truncated = self._bound(stderr_raw)
+            return ExecutionResult(
+                False,
+                stdout,
+                (stderr + "\nTIMEOUT").strip(),
+                -1,
+                time.monotonic() - started,
+                list(command),
+                out_truncated or err_truncated,
+                True,
+            )
