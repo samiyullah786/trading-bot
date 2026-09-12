@@ -55,7 +55,7 @@ class NetworkPolicy:
         self.profile = profile
         self.allowed_hosts = frozenset(h.lower().rstrip(".") for h in (allowed_hosts or frozenset()) if h)
 
-    def validate_host(self, host: str) -> str:
+    def validate_host(self, host: str, *, enforce_allowlist: bool = True) -> str:
         import ipaddress
 
         if not self.profile.allow_network:
@@ -63,7 +63,7 @@ class NetworkPolicy:
         normalized = host.lower().rstrip(".")
         if not normalized:
             raise PermissionError("HTTP host is required")
-        if self.allowed_hosts and normalized not in self.allowed_hosts:
+        if enforce_allowlist and self.allowed_hosts and normalized not in self.allowed_hosts:
             raise PermissionError(f"HTTP host not allowed: {normalized}")
         try:
             address = ipaddress.ip_address(normalized)
@@ -88,15 +88,8 @@ class EvidenceSanitizer:
 
     def __init__(self, profile: SecurityProfile, redactor: SecretRedactor, secrets: list[str]):
         self.limit = profile.max_evidence_bytes
-        if self.limit < 1:
-            raise ValueError("max_evidence_bytes must be positive")
         self.redactor = redactor
         self.secrets = secrets
 
-    def sanitize(self, evidence: str) -> str:
-        clean = self.redactor.redact(str(evidence), self.secrets)
-        raw = clean.encode("utf-8", errors="replace")
-        if len(raw) <= self.limit:
-            return clean
-        clipped = raw[: self.limit].decode("utf-8", errors="ignore")
-        return clipped + "\n[EVIDENCE_TRUNCATED]"
+    def sanitize(self, text: str) -> str:
+        return self.redactor.redact(str(text)[:self.limit], self.secrets)
