@@ -31,6 +31,17 @@ class ServerCoreTests(unittest.TestCase):
             response = ServerCore(Path(tmp)).handle(ServerRequest("x", "delete_everything"))
             self.assertFalse(response.ok)
 
+    def test_duplicate_request_id_is_idempotent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            core = ServerCore(Path(tmp))
+            request = ServerRequest("same-request", "mission.create", {"objective": "run tests"})
+            first = core.handle(request)
+            second = core.handle(request)
+            self.assertTrue(first.ok)
+            self.assertEqual(first, second)
+            self.assertEqual(len(core._missions), 1)
+            self.assertEqual(first.result["mission_id"], "same-request")
+
     def test_mission_lifecycle_persists_across_restart(self):
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp)
