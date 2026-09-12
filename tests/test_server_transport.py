@@ -3,7 +3,7 @@ from __future__ import annotations
 import io
 import unittest
 
-from src.server_transport import LengthPrefixedCodec
+from src.server_transport import AUREONServer, LengthPrefixedCodec
 
 
 class ServerTransportTests(unittest.TestCase):
@@ -25,6 +25,10 @@ class ServerTransportTests(unittest.TestCase):
     def test_codec_rejects_empty_write(self):
         with self.assertRaises(ValueError):
             LengthPrefixedCodec.write(io.BytesIO(), b"")
+
+    def test_non_loopback_requires_tls(self):
+        with self.assertRaises(ValueError):
+            AUREONServer(("0.0.0.0", 0), lambda request: None)
 
 
 if __name__ == "__main__":
