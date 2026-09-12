@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import threading
@@ -23,8 +24,11 @@ class ServerCore:
     boundaries. A mission is never marked complete merely because an action was
     attempted: executable actions require independent verification.
 
-    Request IDs are idempotency keys. A repeated request returns the original
-    response instead of executing a state-changing operation twice.
+    Request IDs are idempotency keys. A repeated request with the same identity
+    and payload returns the original response instead of executing twice.
+    Reusing an identity for different work is rejected rather than silently
+    returning an unrelated cached response. Idempotency records are persisted
+    with bounded state so restart does not reopen a duplicate-execution window.
     """
 
     STATE_FILE = ".aureon-missions.json"
@@ -32,6 +36,7 @@ class ServerCore:
     MAX_HISTORY = 256
     MAX_RUN_STEPS = 32
     MAX_REQUEST_CACHE = 1024
+    MAX_STATE_BYTES = 10_000_000
 
     def __init__(self, workspace: Path, controller: AgentController | None = None) -> None:
         self.workspace = workspace.resolve()
@@ -40,16 +45,28 @@ class ServerCore:
         self._state_path = self.workspace / self.STATE_FILE
         self._lock = threading.RLock()
         self._missions: dict[str, dict[str, Any]] = {}
-        self._request_cache: dict[str, ServerResponse] = {}
+        self._request_cache: dict[str, tuple[str, ServerResponse]] = {}
         self._terminal = TerminalExecutor(self.workspace)
         self._executor = ActionExecutor(self._terminal, IndependentCommandVerifier(self._terminal))
         self._load_state()
 
+    @staticmethod
+    def _fingerprint(request: ServerRequest) -> str:
+        canonical = json.dumps(
+            {"operation": request.operation, "payload": request.payload, "protocol_version": request.protocol_version},
+            sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+        ).encode("utf-8")
+        return hashlib.sha256(canonical).hexdigest()
+
     def handle(self, request: ServerRequest) -> ServerResponse:
         with self._lock:
+            fingerprint = self._fingerprint(request)
             cached = self._request_cache.get(request.request_id)
             if cached is not None:
-                return cached
+                cached_fingerprint, cached_response = cached
+                if cached_fingerprint != fingerprint:
+                    return ServerResponse(request.request_id, False, error="REQUEST_ID_REUSE_CONFLICT")
+                return cached_response
             try:
                 if request.operation == "health":
                     response = ServerResponse(request.request_id, True, {"status": "ready", "protocol": request.protocol_version})
@@ -69,14 +86,15 @@ class ServerCore:
                     response = ServerResponse(request.request_id, False, error="UNSUPPORTED_OPERATION")
             except Exception as exc:
                 response = ServerResponse(request.request_id, False, error=f"INTERNAL_ERROR:{type(exc).__name__}")
-            self._remember_request(request.request_id, response)
+            self._remember_request(request.request_id, fingerprint, response)
             return response
 
-    def _remember_request(self, request_id: str, response: ServerResponse) -> None:
-        self._request_cache[request_id] = response
+    def _remember_request(self, request_id: str, fingerprint: str, response: ServerResponse) -> None:
+        self._request_cache[request_id] = (fingerprint, response)
         while len(self._request_cache) > self.MAX_REQUEST_CACHE:
             oldest = next(iter(self._request_cache))
             del self._request_cache[oldest]
+        self._persist_state()
 
     def _plan(self, request: ServerRequest) -> ServerResponse:
         objective = str(request.payload.get("objective", "")).strip()
@@ -270,18 +288,43 @@ class ServerCore:
             return
         try:
             raw = self._state_path.read_bytes()
-            if len(raw) > 10_000_000:
+            if len(raw) > self.MAX_STATE_BYTES:
                 raise ValueError("state exceeds limit")
             value = json.loads(raw.decode("utf-8"))
             if not isinstance(value, dict):
                 raise ValueError("state must be an object")
+            if "missions" in value or "requests" in value:
+                missions = value.get("missions")
+                requests = value.get("requests")
+                if not isinstance(missions, dict) or not isinstance(requests, dict):
+                    raise ValueError("invalid state envelope")
+                self._missions = {str(k): v for k, v in missions.items() if isinstance(v, dict)}
+                for request_id, item in requests.items():
+                    if not isinstance(item, dict):
+                        continue
+                    fingerprint = item.get("fingerprint")
+                    response_data = item.get("response")
+                    if not isinstance(fingerprint, str) or not isinstance(response_data, dict):
+                        continue
+                    try:
+                        response = ServerResponse.from_dict(response_data)
+                    except (TypeError, ValueError, KeyError):
+                        continue
+                    self._request_cache[str(request_id)] = (fingerprint, response)
+                return
+            # Backward-compatible migration from the original missions-only format.
             self._missions = {str(k): v for k, v in value.items() if isinstance(v, dict)}
         except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError):
-            self._missions = {}
+            raise RuntimeError("CORRUPT_MISSION_STATE")
 
     def _persist_state(self) -> None:
-        payload = json.dumps(self._missions, sort_keys=True, separators=(",", ":")).encode("utf-8")
-        if len(payload) > 10_000_000:
+        requests = {
+            request_id: {"fingerprint": fingerprint, "response": response.to_dict()}
+            for request_id, (fingerprint, response) in self._request_cache.items()
+        }
+        value = {"missions": self._missions, "requests": requests}
+        payload = json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        if len(payload) > self.MAX_STATE_BYTES:
             raise ValueError("mission state exceeds limit")
         temporary = self._state_path.with_suffix(self._state_path.suffix + ".tmp")
         temporary.write_bytes(payload)
