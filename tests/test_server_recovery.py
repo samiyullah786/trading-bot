@@ -91,8 +91,8 @@ class ServerRecoveryTests(unittest.TestCase):
     def test_recovery_budget_exhaustion_fails_closed(self):
         failed1 = self.action("original", ["python", "-c", "print('boom'); raise SystemExit(1)"])
         failed2 = self.action("recovery-1", ["python", "-c", "print('boom'); import sys; sys.exit(1)"])
-        recovery2 = self.action("recovery-2", ["python", "-c", "print('unused')"], ["python", "-c", "print('verified')"])
-        controller = RecoveryControllerStub([self.decision([failed1]), self.decision([failed2]), self.decision([recovery2])])
+        failed3 = self.action("recovery-2", ["python", "-c", "print('boom'); raise SystemExit(1)"])
+        controller = RecoveryControllerStub([self.decision([failed1]), self.decision([failed2]), self.decision([failed3])])
         with tempfile.TemporaryDirectory() as directory:
             server = ServerCore(Path(directory), controller)
             self.create_mission(server, "m4")
