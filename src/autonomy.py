@@ -8,6 +8,8 @@ from .kernel import OutcomeKernel
 from .recovery import RecoveryEngine
 from .critic import AdversarialCritic
 from .planner import CandidateAction, Planner
+from .tools import ToolRequest
+from .tool_runtime import ToolRuntime
 
 
 @dataclass
@@ -46,10 +48,11 @@ class DeterministicStrategist:
 class AutonomousLoop:
     """Closed outcome loop with recovery-driven replanning and proof gates."""
 
-    def __init__(self, kernel: OutcomeKernel, strategist: Strategist, executor: Callable[[ProposedAction], tuple[bool, str, list[str]]] | None = None, critic: AdversarialCritic | None = None, planner: Planner | None = None, require_evidence: bool = True):
+    def __init__(self, kernel: OutcomeKernel, strategist: Strategist, executor: Callable[[ProposedAction], tuple[bool, str, list[str]]] | None = None, critic: AdversarialCritic | None = None, planner: Planner | None = None, require_evidence: bool = True, tool_runtime: ToolRuntime | None = None):
         self.kernel = kernel
         self.strategist = strategist
         self.executor = executor
+        self.tool_runtime = tool_runtime
         self.recovery = RecoveryEngine()
         self.critic = critic or AdversarialCritic()
         self.planner = planner or Planner()
@@ -81,6 +84,22 @@ class AutonomousLoop:
             pairs.append((CandidateAction(proposal.description, list(proposal.criterion_ids), proposal.expected_progress, proposal.success_probability, proposal.cost, proposal.risk, set(proposal.depends_on or []), proposal.reversible), proposal))
         return pairs
 
+    def _execute_tool(self, proposal: ProposedAction, action_id: str) -> tuple[bool, str, list[str]]:
+        if self.tool_runtime is None or not proposal.tool_name:
+            raise RuntimeError("tool runtime is not configured for tool action")
+        request = ToolRequest(
+            action_id=action_id,
+            intent=proposal.tool_payload.get("intent", "execute") if isinstance(proposal.tool_payload, dict) else "execute",
+            payload=dict(proposal.tool_payload or {}),
+            expected_observation=proposal.expected_observation,
+            risk=str(proposal.risk),
+        )
+        result = self.tool_runtime.execute(proposal.tool_name, request)
+        evidence = list(result.evidence)
+        if result.verification is not None and result.verification.observation:
+            evidence.append(result.verification.observation)
+        return result.success, result.observation, evidence
+
     def cycle(self) -> dict:
         complete, report = self._completion()
         if complete:
@@ -101,11 +120,16 @@ class AutonomousLoop:
         proposal.action_id = action.id
         self.kernel.mission.actions.append(action)
         base = {"action": action.id, "description": action.description, "criterion_ids": list(action.criterion_ids), "depends_on": list(action.depends_on), "plan_score": plan.score, "plan_size": len(plan.actions), "alternative_plans": len(alternatives), "gaps": gaps}
-        if self.executor is None:
+        if self.executor is None and not proposal.tool_name:
             return {"state": "READY", **base, "report": report}
         action.status = Status.RUNNING
         try:
-            success, observation, evidence = self.executor(proposal)
+            if proposal.tool_name:
+                success, observation, evidence = self._execute_tool(proposal, action.id)
+            elif self.executor is not None:
+                success, observation, evidence = self.executor(proposal)
+            else:
+                raise RuntimeError("no execution path configured")
         except Exception as exc:
             success, observation, evidence = False, f"executor exception: {type(exc).__name__}: {exc}", []
         action.attempts += 1
