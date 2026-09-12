@@ -99,8 +99,6 @@ class CapabilityFabric:
         if not host:
             raise PermissionError("HTTP host is required")
         normalized = self.network_policy.validate_host(host)
-        # Resolve names before connecting and reject every resolved address that is
-        # private, local, reserved, or otherwise non-public to reduce DNS rebinding/SSRF risk.
         try:
             addresses = {item[4][0] for item in socket.getaddrinfo(normalized, parsed.port, type=socket.SOCK_STREAM)}
         except socket.gaierror as exc:
@@ -108,7 +106,7 @@ class CapabilityFabric:
         if not addresses:
             raise PermissionError(f"HTTP host has no addresses: {normalized}")
         for address in addresses:
-            self.network_policy.validate_host(address)
+            self.network_policy.validate_host(address, enforce_allowlist=False)
         return normalized
 
     def fetch_http(self, url: str, max_bytes: int = 1_000_000) -> CapabilityResult:
