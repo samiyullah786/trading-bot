@@ -115,6 +115,37 @@ class ServerCoreTests(unittest.TestCase):
             self.assertTrue(all(entry["success"] for entry in result.result["history"]))
             self.assertTrue(all(action["verified"] for action in result.result["actions"]))
 
+    def test_tool_action_uses_authoritative_runtime_and_independent_verification(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            core = ServerCore(Path(tmp))
+            core._missions["tool-mission"] = {
+                "mission_id": "tool-mission", "objective": "execute tool", "status": "ready", "confidence": 1.0,
+                "analysis": "", "unknowns": [], "requires_research": False,
+                "actions": [{"action_id": "tool-action", "description": "run a tool", "criterion_ids": [],
+                              "tool_name": "terminal", "tool_payload": {"argv": ["python", "-c", "print('ok')"],
+                              "verification_command": ["python", "-c", "raise SystemExit(0)"]}, "verified": False}],
+                "next_action": 0, "attempts": 0, "history": [], "created_at": 0.0, "updated_at": 0.0,
+            }
+            result = core.handle(ServerRequest("tool-step", "mission.step", {"mission_id": "tool-mission"}))
+            self.assertTrue(result.ok, result.error)
+            self.assertTrue(result.result["actions"][0]["verified"])
+            self.assertIn("verification_returncode=0", result.result["history"][0]["observation"])
+
+    def test_unverified_dependency_blocks_action(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            core = ServerCore(Path(tmp))
+            core._missions["dependency-mission"] = {
+                "mission_id": "dependency-mission", "objective": "dependency", "status": "ready", "confidence": 1.0,
+                "analysis": "", "unknowns": [], "requires_research": False,
+                "actions": [{"action_id": "a", "description": "dependent", "criterion_ids": [], "command": ["python", "-c", "print('bad')"],
+                              "verification_command": ["python", "-c", "print('ok')"], "depends_on": ["missing"], "verified": False}],
+                "next_action": 0, "attempts": 0, "history": [], "created_at": 0.0, "updated_at": 0.0,
+            }
+            result = core.handle(ServerRequest("dependency-step", "mission.step", {"mission_id": "dependency-mission"}))
+            self.assertFalse(result.ok)
+            self.assertEqual(result.error, "ACTION_DEPENDENCY_NOT_VERIFIED")
+            self.assertEqual(result.result["attempts"], 0)
+
     def test_failed_action_never_advances_or_claims_completion(self):
         with tempfile.TemporaryDirectory() as tmp:
             core = ServerCore(Path(tmp))
