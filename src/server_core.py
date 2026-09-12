@@ -12,8 +12,12 @@ from typing import Any
 from .action_executor import ActionExecutor, IndependentCommandVerifier
 from .agent_controller import AgentController
 from .autonomy import ProposedAction
+from .builtin_tools import TerminalTool
+from .command_router import CommandRouter
 from .execution import TerminalExecutor
 from .server_protocol import ServerRequest, ServerResponse
+from .tool_runtime import ToolRuntime, Verification
+from .tools import ToolRegistry, ToolRequest, ToolResult
 
 
 class ServerCore:
@@ -36,6 +40,9 @@ class ServerCore:
         self._request_cache: dict[str, tuple[str, ServerResponse]] = {}
         self._terminal = TerminalExecutor(self.workspace)
         self._executor = ActionExecutor(self._terminal, IndependentCommandVerifier(self._terminal))
+        self._tools = ToolRegistry()
+        self._tools.register(TerminalTool(CommandRouter(self._terminal)))
+        self._tool_runtime = ToolRuntime(self._tools, self._verify_tool_result)
         self._load_state()
 
     @staticmethod
@@ -144,6 +151,11 @@ class ServerCore:
             mission["updated_at"] = time.time()
             return ServerResponse(request.request_id, mission["status"] == "completed", self._public_mission(mission), None if mission["status"] == "completed" else "UNVERIFIED_ACTIONS")
         action = actions[index]
+        if not self._dependencies_verified(action, actions):
+            mission["status"] = "failed"
+            mission["updated_at"] = time.time()
+            self._persist_state()
+            return ServerResponse(request.request_id, False, self._public_mission(mission), "ACTION_DEPENDENCY_NOT_VERIFIED")
         mission["status"] = "executing"
         mission["attempts"] = int(mission.get("attempts", 0)) + 1
         started = time.time()
@@ -151,7 +163,7 @@ class ServerCore:
         if proposal is None:
             success, observation, evidence = False, "INVALID_ACTION", []
         elif proposal.tool_name:
-            success, observation, evidence = False, "SERVER_TOOL_EXECUTION_NOT_YET_BOUND", []
+            success, observation, evidence = self._execute_tool(proposal)
         else:
             success, observation, evidence = self._executor(proposal)
         record = {"action_index": index, "description": str(action.get("description", "")), "success": bool(success), "observation": str(observation), "evidence": [str(item) for item in evidence], "duration": time.time() - started, "timestamp": time.time()}
@@ -170,6 +182,42 @@ class ServerCore:
         mission["updated_at"] = time.time()
         self._persist_state()
         return ServerResponse(request.request_id, bool(success), self._public_mission(mission), None if success else f"ACTION_VERIFICATION_FAILED:{observation[:512]}")
+
+    def _execute_tool(self, proposal: ProposedAction) -> tuple[bool, str, list[str]]:
+        payload = dict(proposal.tool_payload or {})
+        if proposal.command and proposal.tool_name == "terminal" and "argv" not in payload:
+            payload["argv"] = list(proposal.command)
+        intent = str(payload.pop("intent", "execute"))
+        request = ToolRequest(proposal.action_id or "server-action", intent, payload, proposal.expected_observation, str(proposal.risk))
+        result = self._tool_runtime.execute(proposal.tool_name or "", request)
+        evidence = list(result.evidence)
+        if result.verification and result.verification.evidence:
+            evidence.extend(item for item in result.verification.evidence if item not in evidence)
+        return result.success, result.observation, evidence
+
+    def _verify_tool_result(self, request: ToolRequest, result: ToolResult) -> Verification:
+        if not result.success:
+            return Verification(False, tuple(result.evidence), "TOOL_RESULT_FAILED")
+        if request.intent != "execute" or not isinstance(request.payload, dict):
+            return Verification(bool(result.evidence), tuple(result.evidence), "TOOL_EVIDENCE_CHECK")
+        verification = request.payload.get("verification_command")
+        if verification is None:
+            return Verification(bool(result.evidence), tuple(result.evidence), "TOOL_EVIDENCE_CHECK")
+        if not isinstance(verification, list) or not all(isinstance(item, str) and item for item in verification):
+            return Verification(False, (), "INVALID_VERIFICATION_COMMAND")
+        checked = self._terminal.run(verification)
+        observation = f"verification_returncode={checked.returncode}; stdout={checked.stdout}; stderr={checked.stderr}"
+        if checked.success:
+            return Verification(True, (observation,), observation)
+        return Verification(False, (), observation)
+
+    @staticmethod
+    def _dependencies_verified(action: dict[str, Any], actions: list[dict[str, Any]]) -> bool:
+        dependencies = action.get("depends_on", [])
+        if not dependencies:
+            return True
+        by_id = {str(item.get("action_id")): item for item in actions if item.get("action_id")}
+        return all(bool(by_id.get(str(dep), {}).get("verified")) for dep in dependencies)
 
     def _run(self, request: ServerRequest) -> ServerResponse:
         mission = self._mission(request)
