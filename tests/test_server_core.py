@@ -42,6 +42,33 @@ class ServerCoreTests(unittest.TestCase):
             self.assertEqual(len(core._missions), 1)
             self.assertEqual(first.result["mission_id"], "same-request")
 
+    def test_request_id_reuse_with_different_payload_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            core = ServerCore(Path(tmp))
+            first = core.handle(ServerRequest("same", "mission.create", {"objective": "run tests"}))
+            conflict = core.handle(ServerRequest("same", "mission.create", {"objective": "compile"}))
+            self.assertTrue(first.ok)
+            self.assertFalse(conflict.ok)
+            self.assertEqual(conflict.error, "REQUEST_ID_REUSE_CONFLICT")
+            self.assertEqual(len(core._missions), 1)
+
+    def test_idempotency_survives_restart(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            request = ServerRequest("persistent-id", "mission.create", {"objective": "run tests"})
+            first = ServerCore(workspace).handle(request)
+            restarted = ServerCore(workspace)
+            second = restarted.handle(request)
+            self.assertEqual(first, second)
+            self.assertEqual(len(restarted._missions), 1)
+
+    def test_corrupt_state_fails_closed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / ServerCore.STATE_FILE
+            path.write_text("{not-json", encoding="utf-8")
+            with self.assertRaises(RuntimeError):
+                ServerCore(Path(tmp))
+
     def test_mission_lifecycle_persists_across_restart(self):
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp)
