@@ -89,8 +89,8 @@ class ServerRecoveryTests(unittest.TestCase):
             self.assertEqual(len(response.result["actions"]), 1)
 
     def test_recovery_budget_exhaustion_fails_closed(self):
-        failed1 = self.action("original", ["python", "-c", "raise SystemExit(7)"])
-        failed2 = self.action("recovery-1", ["python", "-c", "raise SystemExit(8)"])
+        failed1 = self.action("original", ["python", "-c", "print('boom'); raise SystemExit(1)"])
+        failed2 = self.action("recovery-1", ["python", "-c", "raise SystemExit(1); print('boom')"])
         recovery2 = self.action("recovery-2", ["python", "-c", "print('unused')"], ["python", "-c", "print('verified')"])
         controller = RecoveryControllerStub([self.decision([failed1]), self.decision([failed2]), self.decision([recovery2])])
         with tempfile.TemporaryDirectory() as directory:
