@@ -48,6 +48,32 @@ class ExecutablePolicy:
             raise PermissionError(f"executable not allowed: {executable}")
 
 
+class NetworkPolicy:
+    """Fail-closed HTTP egress policy with SSRF-resistant destination checks."""
+
+    def __init__(self, profile: SecurityProfile, allowed_hosts: frozenset[str] | None = None):
+        self.profile = profile
+        self.allowed_hosts = frozenset(h.lower().rstrip(".") for h in (allowed_hosts or frozenset()) if h)
+
+    def validate_host(self, host: str) -> str:
+        import ipaddress
+
+        if not self.profile.allow_network:
+            raise PermissionError("network access is disabled")
+        normalized = host.lower().rstrip(".")
+        if not normalized:
+            raise PermissionError("HTTP host is required")
+        if self.allowed_hosts and normalized not in self.allowed_hosts:
+            raise PermissionError(f"HTTP host not allowed: {normalized}")
+        try:
+            address = ipaddress.ip_address(normalized)
+        except ValueError:
+            return normalized
+        if address.is_private or address.is_loopback or address.is_link_local or address.is_multicast or address.is_unspecified or address.is_reserved:
+            raise PermissionError(f"HTTP destination is not public: {normalized}")
+        return normalized
+
+
 class SecretRedactor:
     def redact(self, text: str, secrets: list[str]) -> str:
         output = text
