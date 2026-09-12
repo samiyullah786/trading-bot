@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .recovery import RecoveryEngine
+from .recovery import Failure, RecoveryEngine
 
 
 @dataclass(frozen=True)
@@ -45,3 +45,44 @@ class RecoveryController:
 
     def reset_replan_budget(self) -> None:
         self.replans = 0
+
+    def export_state(self) -> dict:
+        return {
+            "replans": self.replans,
+            "failures": [
+                {
+                    "action_id": failure.action_id,
+                    "observation": failure.observation,
+                    "fingerprint": failure.fingerprint,
+                    "attempts": failure.attempts,
+                }
+                for failure in self.engine.failures.values()
+            ],
+        }
+
+    def restore_state(self, state: dict) -> None:
+        if not isinstance(state, dict):
+            raise ValueError("recovery state must be an object")
+        replans = state.get("replans", 0)
+        failures = state.get("failures", [])
+        if not isinstance(replans, int) or isinstance(replans, bool) or not 0 <= replans <= self.max_replans:
+            raise ValueError("invalid recovery replan count")
+        if not isinstance(failures, list):
+            raise ValueError("invalid recovery failures")
+        restored: dict[str, Failure] = {}
+        for item in failures:
+            if not isinstance(item, dict):
+                continue
+            action_id = item.get("action_id")
+            observation = item.get("observation")
+            fingerprint = item.get("fingerprint")
+            attempts = item.get("attempts", 1)
+            if not all(isinstance(value, str) for value in (action_id, observation, fingerprint)):
+                continue
+            if not isinstance(attempts, int) or isinstance(attempts, bool) or attempts < 1 or attempts > 100:
+                continue
+            if fingerprint != self.engine.fingerprint(observation):
+                continue
+            restored[fingerprint] = Failure(action_id, observation, fingerprint, attempts)
+        self.engine.failures = restored
+        self.replans = replans
