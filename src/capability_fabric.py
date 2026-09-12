@@ -3,8 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 import os
+import socket
 import subprocess
 import urllib.request
+from urllib.parse import urlsplit
+
+from .security import ExecutablePolicy, NetworkPolicy, SecurityProfile
 
 
 @dataclass(frozen=True)
@@ -14,18 +18,30 @@ class CapabilityResult:
     evidence: str
 
 
+class _PolicyRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def __init__(self, fabric: "CapabilityFabric"):
+        super().__init__()
+        self.fabric = fabric
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        self.fabric.validate_http_url(newurl)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
 class CapabilityFabric:
-    """Small, provider-neutral bridge from agent intent to real machine capabilities.
+    """Provider-neutral bridge from agent intent to bounded machine capabilities."""
 
-    External libraries are intentionally avoided. High-impact operations remain
-    explicit and bounded so the autonomy layer cannot silently invent permissions.
-    """
-
-    def __init__(self, workspace: str | Path, max_read_bytes: int = 1_000_000):
+    def __init__(self, workspace: str | Path, max_read_bytes: int = 1_000_000,
+                 security_profile: SecurityProfile | None = None,
+                 allowed_http_hosts: set[str] | frozenset[str] | None = None):
         self.workspace = Path(workspace).resolve()
         if not self.workspace.is_dir():
             raise ValueError("workspace must be an existing directory")
         self.max_read_bytes = max(1, min(max_read_bytes, 16_000_000))
+        self.security_profile = security_profile or SecurityProfile()
+        self.executable_policy = ExecutablePolicy(self.security_profile)
+        self.network_policy = NetworkPolicy(self.security_profile, frozenset(allowed_http_hosts or ()))
+        self._http_opener = urllib.request.build_opener(_PolicyRedirectHandler(self))
 
     def _path(self, relative: str) -> Path:
         if not isinstance(relative, str) or not relative.strip():
@@ -66,6 +82,7 @@ class CapabilityFabric:
     def launch_application(self, executable: str, args: list[str] | None = None) -> CapabilityResult:
         if not executable or not isinstance(executable, str):
             raise ValueError("executable is required")
+        self.executable_policy.validate(executable)
         argv = [executable] + list(args or [])
         if any(not isinstance(x, str) or not x for x in argv):
             raise ValueError("application arguments must be non-empty strings")
@@ -74,12 +91,31 @@ class CapabilityFabric:
                                   shell=False, start_new_session=(os.name == "posix"))
         return CapabilityResult(True, process.pid, f"launched {executable} pid={process.pid}")
 
-    def fetch_http(self, url: str, max_bytes: int = 1_000_000) -> CapabilityResult:
+    def validate_http_url(self, url: str) -> str:
         if not isinstance(url, str) or not url.startswith(("http://", "https://")):
             raise ValueError("HTTP capability requires http(s) URL")
+        parsed = urlsplit(url)
+        host = parsed.hostname
+        if not host:
+            raise PermissionError("HTTP host is required")
+        normalized = self.network_policy.validate_host(host)
+        # Resolve names before connecting and reject every resolved address that is
+        # private, local, reserved, or otherwise non-public to reduce DNS rebinding/SSRF risk.
+        try:
+            addresses = {item[4][0] for item in socket.getaddrinfo(normalized, parsed.port, type=socket.SOCK_STREAM)}
+        except socket.gaierror as exc:
+            raise PermissionError(f"HTTP host cannot be resolved: {normalized}") from exc
+        if not addresses:
+            raise PermissionError(f"HTTP host has no addresses: {normalized}")
+        for address in addresses:
+            self.network_policy.validate_host(address)
+        return normalized
+
+    def fetch_http(self, url: str, max_bytes: int = 1_000_000) -> CapabilityResult:
+        self.validate_http_url(url)
         max_bytes = max(1, min(max_bytes, self.max_read_bytes))
         request = urllib.request.Request(url, headers={"User-Agent": "AutonomousAgent/1.0"})
-        with urllib.request.urlopen(request, timeout=15) as response:
+        with self._http_opener.open(request, timeout=self.security_profile.timeout_seconds) as response:
             data = response.read(max_bytes + 1)
         truncated = len(data) > max_bytes
         data = data[:max_bytes]
