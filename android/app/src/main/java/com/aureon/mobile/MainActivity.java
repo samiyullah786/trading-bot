@@ -5,7 +5,6 @@ import android.content.Intent;
 import android.net.Uri;
 import android.os.Bundle;
 import android.view.Gravity;
-import android.view.View;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
@@ -19,6 +18,7 @@ import java.util.List;
 public final class MainActivity extends Activity {
     private static final int EXPORT_REQUEST = 42;
     private LocalEngine engine;
+    private MissionStore store;
     private EditText objective;
     private TextView status;
     private String lastReport = "";
@@ -26,6 +26,7 @@ public final class MainActivity extends Activity {
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
         engine = new LocalEngine(this);
+        store = new MissionStore(this);
         buildUi();
     }
 
@@ -55,8 +56,10 @@ public final class MainActivity extends Activity {
         LinearLayout buttons = new LinearLayout(this);
         buttons.setOrientation(LinearLayout.HORIZONTAL);
         Button run = new Button(this); run.setText("RUN MISSION");
-        Button export = new Button(this); export.setText("EXPORT REPORT");
+        Button history = new Button(this); history.setText("HISTORY");
+        Button export = new Button(this); export.setText("EXPORT");
         buttons.addView(run, new LinearLayout.LayoutParams(0, dp(52), 1));
+        buttons.addView(history, new LinearLayout.LayoutParams(0, dp(52), 1));
         buttons.addView(export, new LinearLayout.LayoutParams(0, dp(52), 1));
         root.addView(buttons);
 
@@ -68,6 +71,7 @@ public final class MainActivity extends Activity {
         root.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
 
         run.setOnClickListener(v -> runMission());
+        history.setOnClickListener(v -> showHistory());
         export.setOnClickListener(v -> exportReport());
         setContentView(root);
     }
@@ -90,8 +94,21 @@ public final class MainActivity extends Activity {
                 if (!result.success) allPassed = false;
             }
             report.append("\nFINAL: ").append(allPassed ? "PROVEN LOCALLY" : "NOT PROVEN").append("\n");
-            lastReport = report.toString();
-            runOnUiThread(() -> status.setText(lastReport));
+            String finished = report.toString();
+            lastReport = finished;
+            try { store.append(finished); } catch (Exception ignored) { }
+            runOnUiThread(() -> status.setText(finished));
+        }).start();
+    }
+
+    private void showHistory() {
+        new Thread(() -> {
+            try {
+                String history = store.read();
+                runOnUiThread(() -> status.setText(history.isEmpty() ? "No mission history yet." : history));
+            } catch (Exception e) {
+                runOnUiThread(() -> status.setText("History unavailable."));
+            }
         }).start();
     }
 
