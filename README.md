@@ -24,15 +24,7 @@ MISSION
 
 ## Demonstrated integration
 
-The repository now contains an executable end-to-end path:
-
-- structured mission
-- provider-generated executable actions
-- terminal execution
-- observations
-- evidence attachment
-- criterion verification
-- verified mission completion
+The repository contains an executable end-to-end path with structured missions, provider-generated actions, terminal execution, observations, evidence, verification, recovery, learning, and persistent runtime state.
 
 Run:
 
@@ -41,6 +33,10 @@ python examples/end_to_end_demo.py
 python -m unittest discover -s tests -v
 ```
 
+## Launch preflight
+
+The dependency-free `LaunchGate` performs fail-closed checks for the workspace, supported Python runtime, and required runtime imports before deployment. It is a preflight gate, not a claim of production readiness.
+
 ## Implemented foundations
 
 ### Execution
@@ -48,8 +44,10 @@ python -m unittest discover -s tests -v
 - Autonomous cycles
 - Task graphs
 - Strategy selection
+- Unified tool runtime
 - Tool routing
 - Terminal execution
+- Browser/CDP integration
 - Recovery boundaries
 - Quality gates
 - Adversarial critique
@@ -62,6 +60,7 @@ python -m unittest discover -s tests -v
 - Metacognition
 - Capability benchmarks
 - Transfer evaluation
+- Purpose-bound agent factory with evaluated lineage
 
 ### Integration
 - Provider-independent reasoning interface
@@ -73,6 +72,6 @@ python -m unittest discover -s tests -v
 - CI configuration
 - Regression and end-to-end tests
 
-## Honest remaining work
+## Remaining launch blockers
 
-This is not yet a complete real-world autonomous AGI/ASI system. Major remaining work includes real browser adapters, authenticated external-service integrations, robust isolation, durable databases, deployment infrastructure, security review, richer planners, real benchmark suites, and repeated real-world mission demonstrations.
+A real-world launch still requires security review, stronger OS/process isolation, browser prompt-injection defenses, authenticated external-service adapters, durable production storage, deployment/rollback infrastructure, richer benchmark suites, and repeated successful real-world mission demonstrations. These are tracked as engineering gates rather than assumed capabilities.
