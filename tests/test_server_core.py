@@ -129,7 +129,7 @@ class ServerCoreTests(unittest.TestCase):
             result = core.handle(ServerRequest("tool-step", "mission.step", {"mission_id": "tool-mission"}))
             self.assertTrue(result.ok, result.error)
             self.assertTrue(result.result["actions"][0]["verified"])
-            self.assertIn("verification_returncode=0", result.result["history"][0]["observation"])
+            self.assertTrue(any("verification_returncode=0" in item for item in result.result["history"][0]["evidence"]))
 
     def test_unverified_dependency_blocks_action(self):
         with tempfile.TemporaryDirectory() as tmp:
