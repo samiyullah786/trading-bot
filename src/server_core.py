@@ -16,6 +16,8 @@ from .builtin_tools import TerminalTool
 from .command_router import CommandRouter
 from .execution import TerminalExecutor
 from .mission_scheduler import MissionScheduler
+from .recovery_controller import RecoveryController
+from .recovery_planner import RecoveryPlanner
 from .server_protocol import ServerRequest, ServerResponse
 from .tool_runtime import ToolRuntime, Verification
 from .tools import ToolRegistry, ToolRequest, ToolResult
@@ -30,6 +32,7 @@ class ServerCore:
     MAX_RUN_STEPS = 32
     MAX_REQUEST_CACHE = 1024
     MAX_STATE_BYTES = 10_000_000
+    MAX_RECOVERY_REPLANS = 3
 
     def __init__(self, workspace: Path, controller: AgentController | None = None) -> None:
         self.workspace = workspace.resolve()
@@ -39,6 +42,7 @@ class ServerCore:
         self._lock = threading.RLock()
         self._missions: dict[str, dict[str, Any]] = {}
         self._request_cache: dict[str, tuple[str, ServerResponse]] = {}
+        self._recovery_controllers: dict[str, RecoveryController] = {}
         self._terminal = TerminalExecutor(self.workspace)
         self._executor = ActionExecutor(self._terminal, IndependentCommandVerifier(self._terminal))
         self._tools = ToolRegistry()
@@ -110,7 +114,7 @@ class ServerCore:
         if mission_id in self._missions:
             return ServerResponse(request.request_id, False, error="MISSION_ID_EXISTS")
         now = time.time()
-        mission = {"mission_id": mission_id, "objective": objective, "status": "planned" if actions else "blocked", "confidence": decision.confidence, "analysis": getattr(decision, "analysis", ""), "unknowns": list(decision.unknowns), "requires_research": bool(decision.requires_research), "actions": actions, "next_action": 0, "attempts": 0, "history": [], "created_at": now, "updated_at": now}
+        mission = {"mission_id": mission_id, "objective": objective, "status": "planned" if actions else "blocked", "confidence": decision.confidence, "analysis": getattr(decision, "analysis", ""), "unknowns": list(decision.unknowns), "requires_research": bool(decision.requires_research), "actions": actions, "next_action": 0, "attempts": 0, "history": [], "recovery": {"replans": 0, "failures": []}, "created_at": now, "updated_at": now}
         self._missions[mission_id] = mission
         self._persist_state()
         return ServerResponse(request.request_id, bool(actions), mission, None if actions else "NO_SAFE_LOCAL_PLAN")
@@ -136,6 +140,7 @@ class ServerCore:
             mission["updated_at"] = time.time()
             self._persist_state()
             return ServerResponse(request.request_id, False, self._public_mission(mission), f"INVALID_PLAN:{scheduler_error}")
+        self._recovery_for(mission)
         if self._all_actions_verified(mission):
             mission["status"] = "completed"
         elif mission["status"] in {"planned", "awaiting_execution", "failed"}:
@@ -168,6 +173,7 @@ class ServerCore:
             mission["updated_at"] = time.time()
             self._persist_state()
             return ServerResponse(request.request_id, False, self._public_mission(mission), f"INVALID_PLAN:{scheduler_error}")
+        self._recovery_for(mission)
         scheduler = MissionScheduler(actions, max_actions=self.MAX_ACTIONS)
         decision = scheduler.next_ready()
         if decision.error == "COMPLETE":
@@ -188,12 +194,13 @@ class ServerCore:
         started = time.time()
         proposal = self._proposal(action)
         if proposal is None:
-            success, observation, evidence = False, "INVALID_ACTION", []
+            success, observation, evidence, failure_class = False, "INVALID_ACTION", [], "configuration"
         elif proposal.tool_name:
-            success, observation, evidence = self._execute_tool(proposal)
+            success, observation, evidence, failure_class = self._execute_tool(proposal)
         else:
             success, observation, evidence = self._executor(proposal)
-        record = {"action_index": index, "description": str(action.get("description", "")), "success": bool(success), "observation": str(observation), "evidence": [str(item) for item in evidence], "duration": time.time() - started, "timestamp": time.time()}
+            failure_class = self._classify_failure(observation, success)
+        record = {"action_index": index, "action_id": str(action.get("action_id", "")), "description": str(action.get("description", "")), "success": bool(success), "observation": str(observation), "evidence": [str(item) for item in evidence], "failure_class": failure_class if not success else None, "duration": time.time() - started, "timestamp": time.time()}
         history = mission.setdefault("history", [])
         history.append(record)
         del history[:-self.MAX_HISTORY]
@@ -205,12 +212,72 @@ class ServerCore:
             mission["status"] = "completed" if self._all_actions_verified(mission) else "ready"
         else:
             action["status"] = "failed"
-            mission["status"] = "failed"
+            recovery_plan = self._recover(mission, action, observation, failure_class)
+            if recovery_plan is not None and recovery_plan.allowed and recovery_plan.actions:
+                for pending in actions:
+                    if pending is not action and not pending.get("verified") and pending.get("status") not in {"superseded", "failed_terminal"}:
+                        pending["status"] = "superseded"
+                        pending["superseded_by"] = [candidate.action_id for candidate in recovery_plan.actions]
+                action["status"] = "failed_terminal"
+                action["recovery_replanned"] = True
+                action["replaced_by"] = [candidate.action_id for candidate in recovery_plan.actions]
+                actions.extend(self._json_safe(candidate) for candidate in recovery_plan.actions)
+                mission["status"] = "ready"
+                mission["next_action"] = index + 1
+                mission.setdefault("recovery_history", []).append({"failed_action_id": action.get("action_id"), "failure_class": failure_class, "observation": str(observation)[:4000], "decision": recovery_plan.recovery.reason, "recovery_action_ids": [candidate.action_id for candidate in recovery_plan.actions], "timestamp": time.time()})
+            else:
+                action["recovery_replanned"] = False
+                mission["status"] = "failed"
+                mission["recovery_failure"] = recovery_plan.reason if recovery_plan is not None else "RECOVERY_NOT_ATTEMPTED"
         mission["updated_at"] = time.time()
         self._persist_state()
-        return ServerResponse(request.request_id, bool(success), self._public_mission(mission), None if success else f"ACTION_VERIFICATION_FAILED:{observation[:512]}")
+        ok = bool(success and evidence) or mission["status"] == "ready"
+        error = None if ok else f"ACTION_VERIFICATION_FAILED:{observation[:512]}"
+        return ServerResponse(request.request_id, ok, self._public_mission(mission), error)
 
-    def _execute_tool(self, proposal: ProposedAction) -> tuple[bool, str, list[str]]:
+    def _recover(self, mission: dict[str, Any], failed_action: dict[str, Any], observation: str, failure_class: str):
+        planner = RecoveryPlanner(
+            self.controller,
+            self._recovery_for(mission),
+            max_actions=self.MAX_ACTIONS - len(mission.get("actions", [])),
+            action_validator=self._recovery_validator(mission),
+        )
+        plan = planner.replan(
+            str(mission.get("objective", "")),
+            {"workspace": str(self.workspace), "verified_actions": [a.get("action_id") for a in mission.get("actions", []) if a.get("verified")], "recovery_history": mission.get("recovery_history", [])[-8:]},
+            self._proposal(failed_action) or ProposedAction(str(failed_action.get("description", "")), []),
+            str(observation),
+            failure_class,
+        )
+        mission["recovery"] = self._recovery_for(mission).export_state()
+        return plan
+
+    def _recovery_validator(self, mission: dict[str, Any]):
+        def validate(candidates: list[ProposedAction]) -> str | None:
+            candidate_dicts = [self._json_safe(candidate) for candidate in candidates]
+            existing = mission.get("actions", [])
+            existing_ids = {str(action.get("action_id", "")) for action in existing}
+            candidate_ids = [str(action.get("action_id", "")) for action in candidate_dicts]
+            if any(not item or item in existing_ids for item in candidate_ids) or len(set(candidate_ids)) != len(candidate_ids):
+                return "ACTION_ID_COLLISION"
+            for candidate in candidate_dicts:
+                deps = candidate.get("depends_on", [])
+                if any(dep not in existing_ids and dep not in candidate_ids for dep in deps):
+                    return "MISSING_DEPENDENCY"
+                if any(dep in existing_ids and not self._action_satisfied_by_id(mission, dep) for dep in deps):
+                    return "UNSATISFIED_DEPENDENCY"
+            combined = existing + candidate_dicts
+            return self._validate_actions(combined)
+        return validate
+
+    @staticmethod
+    def _action_satisfied_by_id(mission: dict[str, Any], action_id: str) -> bool:
+        for action in mission.get("actions", []):
+            if str(action.get("action_id", "")) == action_id:
+                return bool(action.get("verified")) or action.get("status") in {"superseded", "failed_terminal"}
+        return False
+
+    def _execute_tool(self, proposal: ProposedAction) -> tuple[bool, str, list[str], str]:
         payload = dict(proposal.tool_payload or {})
         if proposal.command and proposal.tool_name == "terminal" and "argv" not in payload:
             payload["argv"] = list(proposal.command)
@@ -220,7 +287,21 @@ class ServerCore:
         evidence = list(result.evidence)
         if result.verification and result.verification.evidence:
             evidence.extend(item for item in result.verification.evidence if item not in evidence)
-        return result.success, result.observation, evidence
+        failure_class = result.failure_class or self._classify_failure(result.observation, result.success)
+        return result.success, result.observation, evidence, failure_class
+
+    @staticmethod
+    def _classify_failure(observation: str, success: bool) -> str:
+        if success:
+            return "unknown"
+        text = str(observation).lower()
+        if "timeout" in text or "timed out" in text:
+            return "timeout"
+        if "verification" in text or "required" in text:
+            return "verification"
+        if any(token in text for token in ("unknown_tool", "invalid_action", "not found", "missing dependency", "configuration")):
+            return "configuration"
+        return "execution"
 
     def _verify_tool_result(self, request: ToolRequest, result: ToolResult) -> Verification:
         if not result.success:
@@ -261,6 +342,21 @@ class ServerCore:
         mission_id = str(request.payload.get("mission_id", "")).strip()
         return self._missions.get(mission_id) if mission_id else None
 
+    def _recovery_for(self, mission: dict[str, Any]) -> RecoveryController:
+        mission_id = str(mission.get("mission_id", ""))
+        controller = self._recovery_controllers.get(mission_id)
+        if controller is None:
+            controller = RecoveryController(max_attempts=2, max_replans=self.MAX_RECOVERY_REPLANS)
+            state = mission.get("recovery", {})
+            if isinstance(state, dict):
+                try:
+                    controller.restore_state(state)
+                except ValueError:
+                    controller = RecoveryController(max_attempts=2, max_replans=self.MAX_RECOVERY_REPLANS)
+            self._recovery_controllers[mission_id] = controller
+        mission["recovery"] = controller.export_state()
+        return controller
+
     @staticmethod
     def _proposal(action: dict[str, Any]) -> ProposedAction | None:
         command = action.get("command")
@@ -277,7 +373,7 @@ class ServerCore:
     @staticmethod
     def _all_actions_verified(mission: dict[str, Any]) -> bool:
         actions = mission.get("actions", [])
-        return bool(actions) and all(bool(action.get("verified")) for action in actions)
+        return bool(actions) and all(bool(action.get("verified")) or action.get("status") in {"superseded", "failed_terminal"} for action in actions)
 
     @staticmethod
     def _public_mission(mission: dict[str, Any]) -> dict[str, Any]:
@@ -326,6 +422,9 @@ class ServerCore:
             raise RuntimeError("CORRUPT_MISSION_STATE")
 
     def _persist_state(self) -> None:
+        for mission in self._missions.values():
+            if isinstance(mission, dict) and mission.get("mission_id") in self._recovery_controllers:
+                mission["recovery"] = self._recovery_controllers[mission["mission_id"]].export_state()
         requests = {rid: {"fingerprint": fp, "response": response.to_dict()} for rid, (fp, response) in self._request_cache.items()}
         payload = json.dumps({"missions": self._missions, "requests": requests}, sort_keys=True, separators=(",", ":")).encode("utf-8")
         if len(payload) > self.MAX_STATE_BYTES:
