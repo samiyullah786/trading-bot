@@ -41,6 +41,9 @@ class AgentController:
             depends_on = item.get("depends_on", [])
             if not isinstance(depends_on, list):
                 depends_on = []
+            action_id = item.get("action_id")
+            if action_id is not None:
+                action_id = str(action_id).strip() or None
             try:
                 expected_progress = float(item.get("expected_progress", 0.5))
                 success_probability = float(item.get("success_probability", 0.5))
@@ -62,6 +65,7 @@ class AgentController:
                     cost=max(0.0, cost),
                     risk=max(0.0, risk),
                     reversible=bool(item.get("reversible", True)),
+                    action_id=action_id,
                 ))
         return ControllerDecision(
             actions=actions,
