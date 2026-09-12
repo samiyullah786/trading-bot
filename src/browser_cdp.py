@@ -6,6 +6,7 @@ import os
 import socket
 import ssl
 import struct
+import time
 import urllib.request
 from dataclasses import dataclass
 from urllib.parse import urlparse
@@ -106,8 +107,12 @@ class ChromeDevTools:
                     raise CdpProtocolError("websocket closed")
                 data += chunk
             return data
+
+        fragments: list[bytes] = []
+        fragmented = False
         while True:
             first = recv_exact(2)
+            fin = bool(first[0] & 0x80)
             opcode = first[0] & 0x0F
             length = first[1] & 0x7F
             if length == 126:
@@ -124,8 +129,27 @@ class ChromeDevTools:
             if opcode == 0x8:
                 raise CdpProtocolError("websocket closed by browser")
             if opcode == 0x9:
+                # Control frames must be answered even while a message is fragmented.
+                pong = bytes([0x8A, len(data)]) + data
+                try:
+                    sock.sendall(pong)
+                except OSError:
+                    pass
                 continue
-            if opcode == 0x1:
+            if opcode == 0xA:
+                continue
+            if opcode == 0x0:
+                if not fragmented:
+                    raise CdpProtocolError("unexpected websocket continuation")
+                fragments.append(data)
+                if fin:
+                    return b"".join(fragments)
+                continue
+            if opcode not in {0x1, 0x2}:
+                continue
+            fragments = [data]
+            fragmented = not fin
+            if fin:
                 return data
 
     def command(self, target: CdpTarget, method: str, params: dict | None = None) -> dict:
@@ -144,11 +168,14 @@ class ChromeDevTools:
             sock.close()
 
     def navigate(self, target: CdpTarget, url: str) -> dict:
-        if urlparse(url).scheme not in {"http", "https"}:
-            raise ValueError("browser navigation requires http(s)")
+        parsed = urlparse(url)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ValueError("browser navigation requires an absolute http(s) URL")
         return self.command(target, "Page.navigate", {"url": url})
 
     def evaluate(self, target: CdpTarget, expression: str, return_by_value: bool = True) -> object:
+        if not expression or len(expression.encode("utf-8")) > 256_000:
+            raise ValueError("JavaScript expression is empty or too large")
         result = self.command(target, "Runtime.evaluate", {"expression": expression, "returnByValue": return_by_value, "awaitPromise": True})
         remote = result.get("result", {})
         if remote.get("subtype") == "error" or remote.get("type") == "error":
@@ -167,6 +194,14 @@ class ChromeDevTools:
         expression = "(() => { const e=document.querySelector(%s); if(!e) throw new Error('element not found'); e.focus(); return true; })()" % json.dumps(selector)
         return self.evaluate(target, expression)
 
+    def fill(self, target: CdpTarget, selector: str, text: str) -> object:
+        if not selector or len(selector) > 4096:
+            raise ValueError("selector must be non-empty and bounded")
+        if len(text.encode("utf-8")) > 65536:
+            raise ValueError("text input too large")
+        expression = "(() => { const e=document.querySelector(%s); if(!e) throw new Error('element not found'); e.focus(); const v=%s; const proto=Object.getPrototypeOf(e); const d=Object.getOwnPropertyDescriptor(proto,'value'); if(d&&d.set)d.set.call(e,v); else e.value=v; e.dispatchEvent(new Event('input',{bubbles:true})); e.dispatchEvent(new Event('change',{bubbles:true})); return {tag:e.tagName,valueLength:v.length}; })()" % (json.dumps(selector), json.dumps(text))
+        return self.evaluate(target, expression)
+
     def type_text(self, target: CdpTarget, text: str) -> dict:
         if len(text.encode("utf-8")) > 65536:
             raise ValueError("text input too large")
@@ -179,6 +214,45 @@ class ChromeDevTools:
         self.command(target, "Input.dispatchKeyEvent", {"type": "keyDown", "key": key})
         self.command(target, "Input.dispatchKeyEvent", {"type": "keyUp", "key": key})
         return {"key": key}
+
+    def scroll(self, target: CdpTarget, x: int = 0, y: int = 600) -> object:
+        x = max(-100_000, min(100_000, int(x)))
+        y = max(-100_000, min(100_000, int(y)))
+        return self.evaluate(target, f"window.scrollBy({x},{y}); ({x},{y})")
+
+    def wait_for(self, target: CdpTarget, selector: str, timeout: float | None = None, interval: float = 0.1) -> object:
+        if not selector or len(selector) > 4096:
+            raise ValueError("selector must be non-empty and bounded")
+        limit = self.timeout if timeout is None else float(timeout)
+        if limit <= 0 or limit > 120:
+            raise ValueError("wait timeout must be between 0 and 120 seconds")
+        interval = max(0.05, min(float(interval), 2.0))
+        deadline = time.monotonic() + limit
+        expression = "Boolean(document.querySelector(%s))" % json.dumps(selector)
+        while time.monotonic() < deadline:
+            if bool(self.evaluate(target, expression)):
+                return {"selector": selector, "found": True}
+            time.sleep(interval)
+        raise TimeoutError(f"selector not found before timeout: {selector}")
+
+    def dom_snapshot(self, target: CdpTarget, max_chars: int = 50000) -> str:
+        max_chars = max(1, min(int(max_chars), 200000))
+        expression = "(() => { const root=document.documentElement; if(!root) return ''; return root.outerHTML; })()"
+        return str(self.evaluate(target, expression) or "")[:max_chars]
+
+    def accessibility_snapshot(self, target: CdpTarget, max_chars: int = 50000) -> object:
+        result = self.command(target, "Accessibility.getFullAXTree", {})
+        text = json.dumps(result, ensure_ascii=False, separators=(",", ":"))
+        return text[:max(1, min(int(max_chars), 200000))]
+
+    def back(self, target: CdpTarget) -> object:
+        return self.evaluate(target, "history.back(); true")
+
+    def forward(self, target: CdpTarget) -> object:
+        return self.evaluate(target, "history.forward(); true")
+
+    def reload(self, target: CdpTarget) -> dict:
+        return self.command(target, "Page.reload", {"ignoreCache": False})
 
     def page_text(self, target: CdpTarget, max_chars: int = 20000) -> str:
         max_chars = max(1, min(max_chars, 200000))
