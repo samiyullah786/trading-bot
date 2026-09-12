@@ -7,6 +7,8 @@ from typing import Any
 
 
 PROTOCOL_VERSION = "1.0"
+MAX_REQUEST_BYTES = 1_000_000
+MAX_RESPONSE_BYTES = 2_000_000
 
 
 @dataclass(frozen=True)
@@ -15,18 +17,22 @@ class ServerRequest:
     operation: str
     payload: dict[str, Any] = field(default_factory=dict)
     protocol_version: str = PROTOCOL_VERSION
+    auth_token: str | None = field(default=None, repr=False, compare=False)
 
     def to_dict(self) -> dict[str, Any]:
         if not self.request_id.strip() or not self.operation.strip():
             raise ValueError("request_id and operation are required")
-        return {"v": self.protocol_version, "id": self.request_id, "op": self.operation, "payload": self.payload}
+        body = {"v": self.protocol_version, "id": self.request_id, "op": self.operation, "payload": self.payload}
+        if self.auth_token is not None:
+            body["auth"] = self.auth_token
+        return body
 
     def to_bytes(self) -> bytes:
         return json.dumps(self.to_dict(), separators=(",", ":"), sort_keys=True).encode("utf-8")
 
     @classmethod
     def from_bytes(cls, raw: bytes) -> "ServerRequest":
-        if len(raw) > 1_000_000:
+        if len(raw) > MAX_REQUEST_BYTES:
             raise ValueError("request exceeds protocol limit")
         try:
             value = json.loads(raw.decode("utf-8"))
@@ -37,7 +43,10 @@ class ServerRequest:
         payload = value.get("payload", {})
         if not isinstance(payload, dict):
             raise ValueError("payload must be an object")
-        return cls(str(value.get("id", "")), str(value.get("op", "")), payload, str(value["v"]))
+        auth = value.get("auth")
+        if auth is not None and (not isinstance(auth, str) or len(auth) > 4096):
+            raise ValueError("invalid authentication token")
+        return cls(str(value.get("id", "")), str(value.get("op", "")), payload, str(value["v"]), auth)
 
 
 @dataclass(frozen=True)
@@ -71,7 +80,7 @@ class ServerResponse:
 
     @classmethod
     def from_bytes(cls, raw: bytes) -> "ServerResponse":
-        if len(raw) > 2_000_000:
+        if len(raw) > MAX_RESPONSE_BYTES:
             raise ValueError("response exceeds protocol limit")
         try:
             value = json.loads(raw.decode("utf-8"))
