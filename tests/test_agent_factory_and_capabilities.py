@@ -20,8 +20,8 @@ class AgentFactoryAndCapabilityTests(unittest.TestCase):
 
     def test_factory_improves_only_with_passing_candidate(self):
         def evaluate(spec):
-            score = .97 if "verification" in spec.capabilities else .80
-            return Evaluation(score >= .90, score, ["gate"], [] if score >= .90 else ["weak"], .01)
+            score = .97 if "verification" in spec.capabilities else .90
+            return Evaluation(score >= .90, score, ["gate"], [], .01)
 
         factory = AgentFactory(default_capabilities(), evaluate)
         base = AgentSpec("a", "ship", ["code"])
