@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import ipaddress
 import socket
 import socketserver
+import ssl
+import threading
 from typing import Callable
 
 from .server_protocol import ServerRequest, ServerResponse
@@ -31,6 +34,13 @@ class LengthPrefixedCodec:
         stream.flush()
 
 
+def _is_loopback(host: str) -> bool:
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return host.lower() in {"localhost"}
+
+
 class AUREONRequestHandler(socketserver.StreamRequestHandler):
     def setup(self) -> None:
         super().setup()
@@ -45,7 +55,7 @@ class AUREONRequestHandler(socketserver.StreamRequestHandler):
             response = ServerResponse("", False, error="PROTOCOL_ERROR")
         try:
             LengthPrefixedCodec.write(self.wfile, response.to_bytes())
-        except (BrokenPipeError, ConnectionResetError, TimeoutError):
+        except (BrokenPipeError, ConnectionResetError, TimeoutError, ssl.SSLError):
             return
 
 
@@ -53,35 +63,46 @@ class BoundedThreadingTCPServer(socketserver.ThreadingTCPServer):
     allow_reuse_address = True
     daemon_threads = True
 
-    def __init__(self, address: tuple[str, int], handler, *, max_connections: int, request_timeout: float) -> None:
+    def __init__(self, address: tuple[str, int], handler, *, max_connections: int, request_timeout: float, ssl_context: ssl.SSLContext | None = None) -> None:
         if max_connections < 1:
             raise ValueError("max_connections must be positive")
         if request_timeout <= 0:
             raise ValueError("request_timeout must be positive")
+        host = str(address[0])
+        if not _is_loopback(host) and ssl_context is None:
+            raise ValueError("TLS is required for non-loopback transport")
         self.request_timeout = request_timeout
-        self._connection_slots = __import__("threading").BoundedSemaphore(max_connections)
+        self.ssl_context = ssl_context
+        self._connection_slots = threading.BoundedSemaphore(max_connections)
         super().__init__(address, handler)
         self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
 
+    def get_request(self):
+        request, client_address = self.socket.accept()
+        if self.ssl_context is not None:
+            try:
+                request = self.ssl_context.wrap_socket(request, server_side=True)
+            except Exception:
+                request.close()
+                raise
+        return request, client_address
+
     def process_request(self, request, client_address) -> None:
         if not self._connection_slots.acquire(blocking=False):
-            try:
-                request.close()
-            finally:
-                return
+            request.close()
+            return
         def run() -> None:
             try:
                 self.finish_request(request, client_address)
                 self.shutdown_request(request)
             finally:
                 self._connection_slots.release()
-        thread = __import__("threading").Thread(target=run, daemon=True)
-        thread.start()
+        threading.Thread(target=run, daemon=True).start()
 
 
 class AUREONServer(BoundedThreadingTCPServer):
-    """Bounded local/remote transport; remote deployment should add TLS at the socket boundary."""
+    """Bounded server transport; non-loopback deployment requires a configured TLS context."""
 
-    def __init__(self, address: tuple[str, int], service: Callable[[ServerRequest], ServerResponse], *, max_connections: int = 64, request_timeout: float = 15.0) -> None:
+    def __init__(self, address: tuple[str, int], service: Callable[[ServerRequest], ServerResponse], *, max_connections: int = 64, request_timeout: float = 15.0, ssl_context: ssl.SSLContext | None = None) -> None:
         self.service = service
-        super().__init__(address, AUREONRequestHandler, max_connections=max_connections, request_timeout=request_timeout)
+        super().__init__(address, AUREONRequestHandler, max_connections=max_connections, request_timeout=request_timeout, ssl_context=ssl_context)
