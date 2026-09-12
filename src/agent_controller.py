@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .provider import IntelligenceProvider, ReasoningRequest
+from .local_reasoner import LocalReasoner
 from .metacognition import Metacognition
 from .autonomy import ProposedAction
 
@@ -16,10 +17,10 @@ class ControllerDecision:
 
 
 class AgentController:
-    """Turns structured reasoning into inspectable candidate actions."""
+    """Turns reasoning into inspectable candidate actions without requiring an API."""
 
-    def __init__(self, provider: IntelligenceProvider, metacognition: Metacognition | None = None):
-        self.provider = provider
+    def __init__(self, provider: IntelligenceProvider | None = None, metacognition: Metacognition | None = None):
+        self.provider = provider or LocalReasoner()
         self.metacognition = metacognition or Metacognition()
 
     def decide(self, objective: str, context: dict, constraints: list[str]) -> ControllerDecision:
