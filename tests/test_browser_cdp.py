@@ -42,7 +42,7 @@ class BrowserCdpTests(unittest.TestCase):
         cdp = Mock()
         cdp.select_target.return_value = object()
         tool = BrowserTool(cdp, allowed_hosts={"example.com"})
-        result = tool.execute(ToolRequest("a", "navigate", {"url": "https://evil.example/"}))
+        result = tool.execute(ToolRequest("a", "navigate", {"url": "https://evil.example/"}, ""))
         self.assertFalse(result.success)
         self.assertIn("not allowlisted", result.observation)
         cdp.navigate.assert_not_called()
@@ -52,7 +52,7 @@ class BrowserCdpTests(unittest.TestCase):
         cdp.select_target.return_value = object()
         cdp.navigate.return_value = {"loaderId": "abc"}
         tool = BrowserTool(cdp, allowed_hosts={"example.com"})
-        result = tool.execute(ToolRequest("a", "navigate", {"url": "https://example.com/"}))
+        result = tool.execute(ToolRequest("a", "navigate", {"url": "https://example.com/"}, ""))
         self.assertTrue(result.success)
         cdp.navigate.assert_called_once()
 
