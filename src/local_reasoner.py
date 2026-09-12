@@ -48,6 +48,7 @@ class LocalReasoner:
             if any(re.search(rf"\b{re.escape(keyword)}\b", text) for keyword in rule.keywords):
                 matched.add(rule.name)
                 actions.append({
+                    "action_id": rule.name,
                     "description": f"{rule.name}: execute the local deterministic step",
                     "criterion_ids": [rule.criterion],
                     "command": list(rule.command),
@@ -57,6 +58,7 @@ class LocalReasoner:
                     "cost": 0.1,
                     "risk": 0.05,
                     "reversible": True,
+                    "depends_on": [],
                 })
 
         unknowns: list[str] = []
