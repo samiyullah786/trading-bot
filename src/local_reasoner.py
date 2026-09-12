@@ -26,7 +26,7 @@ class LocalReasoner:
     _RULES = (
         LocalPlanRule("python_tests", ("test", "tests", "pytest", "unittest"), ("python", "-m", "unittest", "discover", "-s", "tests", "-v"), ("python", "-m", "unittest", "discover", "-s", "tests"), "tests_pass"),
         LocalPlanRule("python_compile", ("compile", "syntax", "build"), ("python", "-m", "compileall", "-q", "src"), ("python", "-m", "compileall", "-q", "src"), "source_compiles"),
-        LocalPlanRule("inspect_workspace", ("inspect", "workspace", "repository", "repo", "files"), ("python", "-c", "from pathlib import Path; print('\\n'.join(sorted(str(p.relative_to(Path.cwd())) for p in Path('.').rglob('*') if p.is_file())))"), ("python", "-c", "from pathlib import Path; print(Path('.').is_dir())"), "workspace_inspected"),
+        LocalPlanRule("inspect_workspace", ("inspect", "workspace", "repository", "repo", "files"), ("python", "-c", "from pathlib import Path; root=Path.cwd().resolve(); print('\\n'.join(sorted(str(p.resolve().relative_to(root)) for p in root.rglob('*') if p.is_file())))"), ("python", "-c", "from pathlib import Path; print(Path('.').is_dir())"), "workspace_inspected"),
     )
 
     def reason(self, request: ReasoningRequest) -> ReasoningResponse:
