@@ -76,11 +76,9 @@ class ServerCoreTests(unittest.TestCase):
             planned = core.handle(ServerRequest("mission-1", "mission.create", {"objective": "run tests"}))
             self.assertTrue(planned.ok)
             mission_id = planned.result["mission_id"]
-
             resumed = core.handle(ServerRequest("resume-1", "mission.resume", {"mission_id": mission_id}))
             self.assertTrue(resumed.ok)
             self.assertEqual(resumed.result["status"], "ready")
-
             restarted = ServerCore(workspace)
             fetched = restarted.handle(ServerRequest("get-1", "mission.get", {"mission_id": mission_id}))
             self.assertTrue(fetched.ok)
@@ -115,6 +113,47 @@ class ServerCoreTests(unittest.TestCase):
             self.assertTrue(all(entry["success"] for entry in result.result["history"]))
             self.assertTrue(all(action["verified"] for action in result.result["actions"]))
 
+    def test_scheduler_executes_ready_independent_action_before_blocked_dependency(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            core = ServerCore(Path(tmp))
+            core._missions["scheduled"] = {
+                "mission_id": "scheduled", "objective": "dependency scheduling", "status": "ready", "confidence": 1.0,
+                "analysis": "", "unknowns": [], "requires_research": False,
+                "actions": [
+                    {"action_id": "dependent", "description": "dependent", "command": ["python", "-c", "print('dependent')"],
+                     "verification_command": ["python", "-c", "raise SystemExit(0)"], "depends_on": ["base"], "verified": False},
+                    {"action_id": "base", "description": "base", "command": ["python", "-c", "print('base')"],
+                     "verification_command": ["python", "-c", "raise SystemExit(0)"], "depends_on": [], "verified": False},
+                ],
+                "next_action": 0, "attempts": 0, "history": [], "created_at": 0.0, "updated_at": 0.0,
+            }
+            first = core.handle(ServerRequest("scheduled-1", "mission.step", {"mission_id": "scheduled"}))
+            self.assertTrue(first.ok, first.error)
+            self.assertEqual(first.result["history"][0]["action_index"], 1)
+            second = core.handle(ServerRequest("scheduled-2", "mission.step", {"mission_id": "scheduled"}))
+            self.assertTrue(second.ok, second.error)
+            self.assertEqual(second.result["history"][1]["action_index"], 0)
+            self.assertEqual(second.result["status"], "completed")
+
+    def test_invalid_plan_is_rejected_before_storage(self):
+        class BadController:
+            def decide(self, objective, context, evidence):
+                class D:
+                    actions = [
+                        {"action_id": "a", "command": ["python", "-c", "print('a')"], "depends_on": ["missing"]}
+                    ]
+                    confidence = 1.0
+                    analysis = ""
+                    unknowns = []
+                    requires_research = False
+                return D()
+        with tempfile.TemporaryDirectory() as tmp:
+            core = ServerCore(Path(tmp), BadController())
+            result = core.handle(ServerRequest("bad-plan", "mission.create", {"objective": "anything"}))
+            self.assertFalse(result.ok)
+            self.assertEqual(result.error, "INVALID_PLAN:MISSING_DEPENDENCY")
+            self.assertNotIn("bad-plan", core._missions)
+
     def test_tool_action_uses_authoritative_runtime_and_independent_verification(self):
         with tempfile.TemporaryDirectory() as tmp:
             core = ServerCore(Path(tmp))
@@ -143,7 +182,7 @@ class ServerCoreTests(unittest.TestCase):
             }
             result = core.handle(ServerRequest("dependency-step", "mission.step", {"mission_id": "dependency-mission"}))
             self.assertFalse(result.ok)
-            self.assertEqual(result.error, "ACTION_DEPENDENCY_NOT_VERIFIED")
+            self.assertEqual(result.error, "INVALID_PLAN:MISSING_DEPENDENCY")
             self.assertEqual(result.result["attempts"], 0)
 
     def test_failed_action_never_advances_or_claims_completion(self):
