@@ -120,7 +120,8 @@ class ServerCoreTests(unittest.TestCase):
             core = ServerCore(Path(tmp))
             planned = core.handle(ServerRequest("m", "mission.create", {"objective": "run tests"}))
             self.assertTrue(planned.ok)
-            planned.result["actions"][0]["command"] = ["definitely-not-an-executable"]
+            planned.result["actions"][0]["command"] = ["python", "-c", "raise SystemExit(7)"]
+            planned.result["actions"][0]["verification_command"] = ["python", "-c", "raise SystemExit(0)"]
             core._missions["m"] = planned.result
             result = core.handle(ServerRequest("run-1", "mission.run", {"mission_id": "m", "max_steps": 2}))
             self.assertFalse(result.ok)
