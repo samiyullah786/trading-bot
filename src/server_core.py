@@ -15,6 +15,7 @@ from .autonomy import ProposedAction
 from .builtin_tools import TerminalTool
 from .command_router import CommandRouter
 from .execution import TerminalExecutor
+from .mission_scheduler import MissionScheduler
 from .server_protocol import ServerRequest, ServerResponse
 from .tool_runtime import ToolRuntime, Verification
 from .tools import ToolRegistry, ToolRequest, ToolResult
@@ -87,6 +88,13 @@ class ServerCore:
             del self._request_cache[next(iter(self._request_cache))]
         self._persist_state()
 
+    def _validate_actions(self, actions: list[dict[str, Any]]) -> str | None:
+        try:
+            MissionScheduler(actions, max_actions=self.MAX_ACTIONS)
+        except ValueError as exc:
+            return str(exc)
+        return None
+
     def _plan(self, request: ServerRequest) -> ServerResponse:
         objective = str(request.payload.get("objective", "")).strip()
         if not objective:
@@ -95,6 +103,9 @@ class ServerCore:
         actions = [self._json_safe(action) for action in decision.actions]
         if len(actions) > self.MAX_ACTIONS:
             return ServerResponse(request.request_id, False, error="PLAN_TOO_LARGE")
+        scheduler_error = self._validate_actions(actions)
+        if scheduler_error is not None:
+            return ServerResponse(request.request_id, False, error=f"INVALID_PLAN:{scheduler_error}")
         mission_id = str(request.payload.get("mission_id", request.request_id)).strip() or request.request_id
         if mission_id in self._missions:
             return ServerResponse(request.request_id, False, error="MISSION_ID_EXISTS")
@@ -119,8 +130,14 @@ class ServerCore:
             return ServerResponse(request.request_id, False, error="MISSION_NOT_FOUND")
         if mission["status"] in {"completed", "cancelled"}:
             return ServerResponse(request.request_id, False, error="MISSION_TERMINAL")
-        if mission["next_action"] >= len(mission["actions"]):
-            mission["status"] = "completed" if self._all_actions_verified(mission) else "failed"
+        scheduler_error = self._validate_actions(mission.get("actions", []))
+        if scheduler_error is not None:
+            mission["status"] = "failed"
+            mission["updated_at"] = time.time()
+            self._persist_state()
+            return ServerResponse(request.request_id, False, self._public_mission(mission), f"INVALID_PLAN:{scheduler_error}")
+        if self._all_actions_verified(mission):
+            mission["status"] = "completed"
         elif mission["status"] in {"planned", "awaiting_execution", "failed"}:
             mission["status"] = "ready"
         mission["updated_at"] = time.time()
@@ -144,18 +161,28 @@ class ServerCore:
             return ServerResponse(request.request_id, False, error="MISSION_NOT_FOUND")
         if mission["status"] in {"cancelled", "completed", "blocked"}:
             return ServerResponse(request.request_id, False, error="MISSION_NOT_RUNNABLE")
-        index = int(mission["next_action"])
-        actions = mission["actions"]
-        if index >= len(actions):
-            mission["status"] = "completed" if self._all_actions_verified(mission) else "failed"
-            mission["updated_at"] = time.time()
-            return ServerResponse(request.request_id, mission["status"] == "completed", self._public_mission(mission), None if mission["status"] == "completed" else "UNVERIFIED_ACTIONS")
-        action = actions[index]
-        if not self._dependencies_verified(action, actions):
+        actions = mission.get("actions", [])
+        scheduler_error = self._validate_actions(actions)
+        if scheduler_error is not None:
             mission["status"] = "failed"
             mission["updated_at"] = time.time()
             self._persist_state()
-            return ServerResponse(request.request_id, False, self._public_mission(mission), "ACTION_DEPENDENCY_NOT_VERIFIED")
+            return ServerResponse(request.request_id, False, self._public_mission(mission), f"INVALID_PLAN:{scheduler_error}")
+        scheduler = MissionScheduler(actions, max_actions=self.MAX_ACTIONS)
+        decision = scheduler.next_ready()
+        if decision.error == "COMPLETE":
+            mission["status"] = "completed"
+            mission["next_action"] = len(actions)
+            mission["updated_at"] = time.time()
+            self._persist_state()
+            return ServerResponse(request.request_id, True, self._public_mission(mission))
+        if decision.ready_index is None:
+            mission["status"] = "failed"
+            mission["updated_at"] = time.time()
+            self._persist_state()
+            return ServerResponse(request.request_id, False, self._public_mission(mission), decision.error or "NO_READY_ACTION")
+        index = decision.ready_index
+        action = actions[index]
         mission["status"] = "executing"
         mission["attempts"] = int(mission.get("attempts", 0)) + 1
         started = time.time()
@@ -175,7 +202,7 @@ class ServerCore:
         if success and evidence:
             action["status"] = "verified"
             mission["next_action"] = index + 1
-            mission["status"] = "ready" if mission["next_action"] < len(actions) else "awaiting_completion"
+            mission["status"] = "completed" if self._all_actions_verified(mission) else "ready"
         else:
             action["status"] = "failed"
             mission["status"] = "failed"
@@ -210,14 +237,6 @@ class ServerCore:
         if checked.success:
             return Verification(True, (observation,), observation)
         return Verification(False, (), observation)
-
-    @staticmethod
-    def _dependencies_verified(action: dict[str, Any], actions: list[dict[str, Any]]) -> bool:
-        dependencies = action.get("depends_on", [])
-        if not dependencies:
-            return True
-        by_id = {str(item.get("action_id")): item for item in actions if item.get("action_id")}
-        return all(bool(by_id.get(str(dep), {}).get("verified")) for dep in dependencies)
 
     def _run(self, request: ServerRequest) -> ServerResponse:
         mission = self._mission(request)
