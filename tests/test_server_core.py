@@ -62,11 +62,16 @@ class ServerCoreTests(unittest.TestCase):
 
     def test_run_executes_and_independently_verifies_each_action(self):
         with tempfile.TemporaryDirectory() as tmp:
-            core = ServerCore(Path(tmp))
+            workspace = Path(tmp)
+            (workspace / "src").mkdir()
+            (workspace / "tests").mkdir()
+            (workspace / "src" / "sample.py").write_text("value = 1\n", encoding="utf-8")
+            (workspace / "tests" / "test_sample.py").write_text("import unittest\n\nclass T(unittest.TestCase):\n    def test_ok(self):\n        self.assertEqual(1, 1)\n\nif __name__ == '__main__':\n    unittest.main()\n", encoding="utf-8")
+            core = ServerCore(workspace)
             planned = core.handle(ServerRequest("m", "mission.create", {"objective": "compile and test the repository"}))
             self.assertTrue(planned.ok)
             result = core.handle(ServerRequest("run-1", "mission.run", {"mission_id": "m", "max_steps": 8}))
-            self.assertTrue(result.ok)
+            self.assertTrue(result.ok, result.error)
             self.assertEqual(result.result["status"], "completed")
             self.assertGreaterEqual(len(result.result["history"]), 2)
             self.assertTrue(all(entry["success"] for entry in result.result["history"]))
