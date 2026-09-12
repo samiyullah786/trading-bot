@@ -22,12 +22,16 @@ class ServerCore:
     this server-side core using the repository's existing safety and evidence
     boundaries. A mission is never marked complete merely because an action was
     attempted: executable actions require independent verification.
+
+    Request IDs are idempotency keys. A repeated request returns the original
+    response instead of executing a state-changing operation twice.
     """
 
     STATE_FILE = ".aureon-missions.json"
     MAX_ACTIONS = 128
     MAX_HISTORY = 256
     MAX_RUN_STEPS = 32
+    MAX_REQUEST_CACHE = 1024
 
     def __init__(self, workspace: Path, controller: AgentController | None = None) -> None:
         self.workspace = workspace.resolve()
@@ -36,30 +40,43 @@ class ServerCore:
         self._state_path = self.workspace / self.STATE_FILE
         self._lock = threading.RLock()
         self._missions: dict[str, dict[str, Any]] = {}
+        self._request_cache: dict[str, ServerResponse] = {}
         self._terminal = TerminalExecutor(self.workspace)
         self._executor = ActionExecutor(self._terminal, IndependentCommandVerifier(self._terminal))
         self._load_state()
 
     def handle(self, request: ServerRequest) -> ServerResponse:
-        try:
-            with self._lock:
+        with self._lock:
+            cached = self._request_cache.get(request.request_id)
+            if cached is not None:
+                return cached
+            try:
                 if request.operation == "health":
-                    return ServerResponse(request.request_id, True, {"status": "ready", "protocol": request.protocol_version})
-                if request.operation in {"plan", "mission.create"}:
-                    return self._plan(request)
-                if request.operation in {"mission.get", "mission.status"}:
-                    return self._get(request)
-                if request.operation == "mission.resume":
-                    return self._resume(request)
-                if request.operation == "mission.cancel":
-                    return self._cancel(request)
-                if request.operation == "mission.step":
-                    return self._step(request)
-                if request.operation == "mission.run":
-                    return self._run(request)
-                return ServerResponse(request.request_id, False, error="UNSUPPORTED_OPERATION")
-        except Exception as exc:
-            return ServerResponse(request.request_id, False, error=f"INTERNAL_ERROR:{type(exc).__name__}")
+                    response = ServerResponse(request.request_id, True, {"status": "ready", "protocol": request.protocol_version})
+                elif request.operation in {"plan", "mission.create"}:
+                    response = self._plan(request)
+                elif request.operation in {"mission.get", "mission.status"}:
+                    response = self._get(request)
+                elif request.operation == "mission.resume":
+                    response = self._resume(request)
+                elif request.operation == "mission.cancel":
+                    response = self._cancel(request)
+                elif request.operation == "mission.step":
+                    response = self._step(request)
+                elif request.operation == "mission.run":
+                    response = self._run(request)
+                else:
+                    response = ServerResponse(request.request_id, False, error="UNSUPPORTED_OPERATION")
+            except Exception as exc:
+                response = ServerResponse(request.request_id, False, error=f"INTERNAL_ERROR:{type(exc).__name__}")
+            self._remember_request(request.request_id, response)
+            return response
+
+    def _remember_request(self, request_id: str, response: ServerResponse) -> None:
+        self._request_cache[request_id] = response
+        while len(self._request_cache) > self.MAX_REQUEST_CACHE:
+            oldest = next(iter(self._request_cache))
+            del self._request_cache[oldest]
 
     def _plan(self, request: ServerRequest) -> ServerResponse:
         objective = str(request.payload.get("objective", "")).strip()
