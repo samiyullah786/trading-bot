@@ -3,17 +3,20 @@ from __future__ import annotations
 from urllib.parse import urlparse
 
 from .browser_cdp import ChromeDevTools
+from .browser_security import BrowserContentBoundary
 from .tools import ToolRequest, ToolResult
 
 
 class BrowserTool:
-    """Dependency-free browser tool with bounded navigation and inspection."""
+    """Dependency-free browser tool with bounded navigation and trust separation."""
 
     name = "browser"
 
-    def __init__(self, cdp: ChromeDevTools, *, allowed_hosts: set[str] | None = None):
+    def __init__(self, cdp: ChromeDevTools, *, allowed_hosts: set[str] | None = None,
+                 content_boundary: BrowserContentBoundary | None = None):
         self.cdp = cdp
         self.allowed_hosts = {host.lower().rstrip(".") for host in (allowed_hosts or set())}
+        self.content_boundary = content_boundary or BrowserContentBoundary()
 
     def _check_url(self, url: str) -> None:
         parsed = urlparse(url)
@@ -21,6 +24,11 @@ class BrowserTool:
             raise ValueError("browser navigation requires an absolute http(s) URL")
         if self.allowed_hosts and parsed.hostname.lower().rstrip(".") not in self.allowed_hosts:
             raise PermissionError("browser host is not allowlisted")
+
+    def _content_result(self, value: object, operation: str) -> ToolResult:
+        observation, evidence, metadata = self.content_boundary.package(value)
+        metadata["operation"] = operation
+        return ToolResult(True, observation, evidence, metadata)
 
     def execute(self, request: ToolRequest) -> ToolResult:
         operation = str(request.payload.get("operation", "navigate"))
@@ -30,13 +38,13 @@ class BrowserTool:
                 url = str(request.payload["url"])
                 self._check_url(url)
                 result = self.cdp.navigate(target, url)
-                return ToolResult(True, "navigation requested", [f"browser.loader_id={result.get('loaderId', '')}", f"browser.url={url}"], {"operation": operation})
+                return ToolResult(True, "navigation requested", [f"browser.loader_id={result.get('loaderId', '')}", f"browser.url={url}"], {"operation": operation, "trust_boundary": "validated_navigation_request"})
             if operation == "evaluate":
                 value = self.cdp.evaluate(target, request.payload["expression"])
-                return ToolResult(True, "evaluation completed", [f"browser.value={str(value)[:8000]!r}"], {"operation": operation, "value": value})
+                return self._content_result(value, operation)
             if operation == "click":
                 value = self.cdp.click(target, request.payload["selector"])
-                return ToolResult(True, "element clicked", [f"browser.click={value!r}"], {"operation": operation})
+                return self._content_result(value, operation)
             if operation == "focus":
                 self.cdp.focus(target, request.payload["selector"])
                 return ToolResult(True, "element focused", ["browser.focus=ok"], {"operation": operation})
@@ -57,10 +65,10 @@ class BrowserTool:
                 return ToolResult(True, "element appeared", [f"browser.wait={value!r}"], {"operation": operation})
             if operation == "dom":
                 value = self.cdp.dom_snapshot(target, int(request.payload.get("max_chars", 50000)))
-                return ToolResult(True, "DOM snapshot captured", [f"browser.dom={value[:12000]!r}"], {"operation": operation})
+                return self._content_result(value, operation)
             if operation == "accessibility":
                 value = self.cdp.accessibility_snapshot(target, int(request.payload.get("max_chars", 50000)))
-                return ToolResult(True, "accessibility snapshot captured", [f"browser.ax={str(value)[:12000]!r}"], {"operation": operation})
+                return self._content_result(value, operation)
             if operation == "back":
                 self.cdp.back(target)
                 return ToolResult(True, "browser navigated back", ["browser.history=back"], {"operation": operation})
@@ -72,10 +80,10 @@ class BrowserTool:
                 return ToolResult(True, "page reload requested", ["browser.reload=ok"], {"operation": operation})
             if operation == "read":
                 value = self.cdp.page_text(target, int(request.payload.get("max_chars", 20000)))
-                return ToolResult(True, "page text read", [f"browser.text={value[:12000]!r}"], {"operation": operation})
+                return self._content_result(value, operation)
             if operation == "screenshot":
                 data = self.cdp.screenshot_png(target)
-                return ToolResult(True, f"screenshot captured ({len(data)} bytes)", [f"browser.screenshot_bytes={len(data)}"], {"operation": operation})
+                return ToolResult(True, f"screenshot captured ({len(data)} bytes)", [f"browser.screenshot_bytes={len(data)}"], {"operation": operation, "trust_boundary": "browser_binary"})
             return ToolResult(False, f"UNSUPPORTED_BROWSER_OPERATION:{operation}", [])
         except PermissionError as exc:
             return ToolResult(False, f"browser policy: {exc}", [])
