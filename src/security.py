@@ -88,8 +88,15 @@ class EvidenceSanitizer:
 
     def __init__(self, profile: SecurityProfile, redactor: SecretRedactor, secrets: list[str]):
         self.limit = profile.max_evidence_bytes
+        if self.limit < 1:
+            raise ValueError("max_evidence_bytes must be positive")
         self.redactor = redactor
         self.secrets = secrets
 
-    def sanitize(self, text: str) -> str:
-        return self.redactor.redact(str(text)[:self.limit], self.secrets)
+    def sanitize(self, evidence: str) -> str:
+        clean = self.redactor.redact(str(evidence), self.secrets)
+        raw = clean.encode("utf-8", errors="replace")
+        if len(raw) <= self.limit:
+            return clean
+        clipped = raw[: self.limit].decode("utf-8", errors="ignore")
+        return clipped + "\n[EVIDENCE_TRUNCATED]"
