@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hmac
 import ipaddress
 import socket
 import socketserver
@@ -50,7 +51,11 @@ class AUREONRequestHandler(socketserver.StreamRequestHandler):
         service: Callable[[ServerRequest], ServerResponse] = self.server.service  # type: ignore[attr-defined]
         try:
             request = ServerRequest.from_bytes(LengthPrefixedCodec.read(self.rfile))
-            response = service(request)
+            expected = self.server.auth_token  # type: ignore[attr-defined]
+            if expected is not None and not hmac.compare_digest(request.auth_token or "", expected):
+                response = ServerResponse(request.request_id, False, error="AUTHENTICATION_FAILED")
+            else:
+                response = service(request)
         except Exception:
             response = ServerResponse("", False, error="PROTOCOL_ERROR")
         try:
@@ -63,7 +68,7 @@ class BoundedThreadingTCPServer(socketserver.ThreadingTCPServer):
     allow_reuse_address = True
     daemon_threads = True
 
-    def __init__(self, address: tuple[str, int], handler, *, max_connections: int, request_timeout: float, ssl_context: ssl.SSLContext | None = None) -> None:
+    def __init__(self, address: tuple[str, int], handler, *, max_connections: int, request_timeout: float, ssl_context: ssl.SSLContext | None = None, auth_token: str | None = None) -> None:
         if max_connections < 1:
             raise ValueError("max_connections must be positive")
         if request_timeout <= 0:
@@ -71,8 +76,13 @@ class BoundedThreadingTCPServer(socketserver.ThreadingTCPServer):
         host = str(address[0])
         if not _is_loopback(host) and ssl_context is None:
             raise ValueError("TLS is required for non-loopback transport")
+        if not _is_loopback(host) and (auth_token is None or not auth_token):
+            raise ValueError("authentication is required for non-loopback transport")
+        if auth_token is not None and not 16 <= len(auth_token) <= 4096:
+            raise ValueError("auth_token must be between 16 and 4096 characters")
         self.request_timeout = request_timeout
         self.ssl_context = ssl_context
+        self.auth_token = auth_token
         self._connection_slots = threading.BoundedSemaphore(max_connections)
         super().__init__(address, handler)
         self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
@@ -101,8 +111,8 @@ class BoundedThreadingTCPServer(socketserver.ThreadingTCPServer):
 
 
 class AUREONServer(BoundedThreadingTCPServer):
-    """Bounded server transport; non-loopback deployment requires a configured TLS context."""
+    """Bounded transport; remote deployment requires TLS and a high-entropy auth token."""
 
-    def __init__(self, address: tuple[str, int], service: Callable[[ServerRequest], ServerResponse], *, max_connections: int = 64, request_timeout: float = 15.0, ssl_context: ssl.SSLContext | None = None) -> None:
+    def __init__(self, address: tuple[str, int], service: Callable[[ServerRequest], ServerResponse], *, max_connections: int = 64, request_timeout: float = 15.0, ssl_context: ssl.SSLContext | None = None, auth_token: str | None = None) -> None:
         self.service = service
-        super().__init__(address, AUREONRequestHandler, max_connections=max_connections, request_timeout=request_timeout, ssl_context=ssl_context)
+        super().__init__(address, AUREONRequestHandler, max_connections=max_connections, request_timeout=request_timeout, ssl_context=ssl_context, auth_token=auth_token)
