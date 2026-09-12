@@ -17,19 +17,7 @@ from .server_protocol import ServerRequest, ServerResponse
 
 
 class ServerCore:
-    """OS-neutral authoritative AUREON brain boundary.
-
-    Clients remain thin interfaces. Mission planning and execution happen in
-    this server-side core using the repository's existing safety and evidence
-    boundaries. A mission is never marked complete merely because an action was
-    attempted: executable actions require independent verification.
-
-    Request IDs are idempotency keys. A repeated request with the same identity
-    and payload returns the original response instead of executing twice.
-    Reusing an identity for different work is rejected rather than silently
-    returning an unrelated cached response. Idempotency records are persisted
-    with bounded state so restart does not reopen a duplicate-execution window.
-    """
+    """OS-neutral authoritative AUREON brain boundary."""
 
     STATE_FILE = ".aureon-missions.json"
     MAX_ACTIONS = 128
@@ -52,10 +40,7 @@ class ServerCore:
 
     @staticmethod
     def _fingerprint(request: ServerRequest) -> str:
-        canonical = json.dumps(
-            {"operation": request.operation, "payload": request.payload, "protocol_version": request.protocol_version},
-            sort_keys=True, separators=(",", ":"), ensure_ascii=False,
-        ).encode("utf-8")
+        canonical = json.dumps({"operation": request.operation, "payload": request.payload, "protocol_version": request.protocol_version}, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
         return hashlib.sha256(canonical).hexdigest()
 
     def handle(self, request: ServerRequest) -> ServerResponse:
@@ -92,8 +77,7 @@ class ServerCore:
     def _remember_request(self, request_id: str, fingerprint: str, response: ServerResponse) -> None:
         self._request_cache[request_id] = (fingerprint, response)
         while len(self._request_cache) > self.MAX_REQUEST_CACHE:
-            oldest = next(iter(self._request_cache))
-            del self._request_cache[oldest]
+            del self._request_cache[next(iter(self._request_cache))]
         self._persist_state()
 
     def _plan(self, request: ServerRequest) -> ServerResponse:
@@ -108,21 +92,7 @@ class ServerCore:
         if mission_id in self._missions:
             return ServerResponse(request.request_id, False, error="MISSION_ID_EXISTS")
         now = time.time()
-        mission = {
-            "mission_id": mission_id,
-            "objective": objective,
-            "status": "planned" if actions else "blocked",
-            "confidence": decision.confidence,
-            "analysis": getattr(decision, "analysis", ""),
-            "unknowns": list(decision.unknowns),
-            "requires_research": bool(decision.requires_research),
-            "actions": actions,
-            "next_action": 0,
-            "attempts": 0,
-            "history": [],
-            "created_at": now,
-            "updated_at": now,
-        }
+        mission = {"mission_id": mission_id, "objective": objective, "status": "planned" if actions else "blocked", "confidence": decision.confidence, "analysis": getattr(decision, "analysis", ""), "unknowns": list(decision.unknowns), "requires_research": bool(decision.requires_research), "actions": actions, "next_action": 0, "attempts": 0, "history": [], "created_at": now, "updated_at": now}
         self._missions[mission_id] = mission
         self._persist_state()
         return ServerResponse(request.request_id, bool(actions), mission, None if actions else "NO_SAFE_LOCAL_PLAN")
@@ -173,7 +143,6 @@ class ServerCore:
             mission["status"] = "completed" if self._all_actions_verified(mission) else "failed"
             mission["updated_at"] = time.time()
             return ServerResponse(request.request_id, mission["status"] == "completed", self._public_mission(mission), None if mission["status"] == "completed" else "UNVERIFIED_ACTIONS")
-
         action = actions[index]
         mission["status"] = "executing"
         mission["attempts"] = int(mission.get("attempts", 0)) + 1
@@ -185,16 +154,7 @@ class ServerCore:
             success, observation, evidence = False, "SERVER_TOOL_EXECUTION_NOT_YET_BOUND", []
         else:
             success, observation, evidence = self._executor(proposal)
-
-        record = {
-            "action_index": index,
-            "description": str(action.get("description", "")),
-            "success": bool(success),
-            "observation": str(observation),
-            "evidence": [str(item) for item in evidence],
-            "duration": time.time() - started,
-            "timestamp": time.time(),
-        }
+        record = {"action_index": index, "description": str(action.get("description", "")), "success": bool(success), "observation": str(observation), "evidence": [str(item) for item in evidence], "duration": time.time() - started, "timestamp": time.time()}
         history = mission.setdefault("history", [])
         history.append(record)
         del history[:-self.MAX_HISTORY]
@@ -209,7 +169,7 @@ class ServerCore:
             mission["status"] = "failed"
         mission["updated_at"] = time.time()
         self._persist_state()
-        return ServerResponse(request.request_id, bool(success), self._public_mission(mission), None if success else "ACTION_VERIFICATION_FAILED")
+        return ServerResponse(request.request_id, bool(success), self._public_mission(mission), None if success else f"ACTION_VERIFICATION_FAILED:{observation[:512]}")
 
     def _run(self, request: ServerRequest) -> ServerResponse:
         mission = self._mission(request)
@@ -243,22 +203,7 @@ class ServerCore:
         if verification is not None and (not isinstance(verification, list) or not all(isinstance(v, str) and v for v in verification)):
             return None
         try:
-            return ProposedAction(
-                description=str(action.get("description", "")),
-                criterion_ids=[str(v) for v in action.get("criterion_ids", []) if isinstance(v, str)],
-                command=command,
-                expected_observation=str(action.get("expected_observation", "")),
-                verification_command=verification,
-                tool_name=str(action["tool_name"]) if action.get("tool_name") else None,
-                tool_payload=dict(action["tool_payload"]) if isinstance(action.get("tool_payload"), dict) else None,
-                depends_on=[str(v) for v in action.get("depends_on", []) if isinstance(v, str)],
-                expected_progress=float(action.get("expected_progress", 0.5)),
-                success_probability=float(action.get("success_probability", 0.5)),
-                cost=float(action.get("cost", 0.0)),
-                risk=float(action.get("risk", 0.0)),
-                reversible=bool(action.get("reversible", True)),
-                action_id=str(action["action_id"]) if action.get("action_id") else None,
-            )
+            return ProposedAction(description=str(action.get("description", "")), criterion_ids=[str(v) for v in action.get("criterion_ids", []) if isinstance(v, str)], command=command, expected_observation=str(action.get("expected_observation", "")), verification_command=verification, tool_name=str(action["tool_name"]) if action.get("tool_name") else None, tool_payload=dict(action["tool_payload"]) if isinstance(action.get("tool_payload"), dict) else None, depends_on=[str(v) for v in action.get("depends_on", []) if isinstance(v, str)], expected_progress=float(action.get("expected_progress", 0.5)), success_probability=float(action.get("success_probability", 0.5)), cost=float(action.get("cost", 0.0)), risk=float(action.get("risk", 0.0)), reversible=bool(action.get("reversible", True)), action_id=str(action["action_id"]) if action.get("action_id") else None)
         except (TypeError, ValueError):
             return None
 
@@ -294,36 +239,28 @@ class ServerCore:
             if not isinstance(value, dict):
                 raise ValueError("state must be an object")
             if "missions" in value or "requests" in value:
-                missions = value.get("missions")
-                requests = value.get("requests")
+                missions, requests = value.get("missions"), value.get("requests")
                 if not isinstance(missions, dict) or not isinstance(requests, dict):
                     raise ValueError("invalid state envelope")
                 self._missions = {str(k): v for k, v in missions.items() if isinstance(v, dict)}
                 for request_id, item in requests.items():
-                    if not isinstance(item, dict):
-                        continue
-                    fingerprint = item.get("fingerprint")
-                    response_data = item.get("response")
-                    if not isinstance(fingerprint, str) or not isinstance(response_data, dict):
+                    if not isinstance(item, dict) or not isinstance(item.get("fingerprint"), str) or not isinstance(item.get("response"), dict):
                         continue
                     try:
-                        response = ServerResponse.from_dict(response_data)
+                        response = ServerResponse.from_dict(item["response"])
                     except (TypeError, ValueError, KeyError):
                         continue
-                    self._request_cache[str(request_id)] = (fingerprint, response)
+                    self._request_cache[str(request_id)] = (item["fingerprint"], response)
+                while len(self._request_cache) > self.MAX_REQUEST_CACHE:
+                    del self._request_cache[next(iter(self._request_cache))]
                 return
-            # Backward-compatible migration from the original missions-only format.
             self._missions = {str(k): v for k, v in value.items() if isinstance(v, dict)}
         except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError):
             raise RuntimeError("CORRUPT_MISSION_STATE")
 
     def _persist_state(self) -> None:
-        requests = {
-            request_id: {"fingerprint": fingerprint, "response": response.to_dict()}
-            for request_id, (fingerprint, response) in self._request_cache.items()
-        }
-        value = {"missions": self._missions, "requests": requests}
-        payload = json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        requests = {rid: {"fingerprint": fp, "response": response.to_dict()} for rid, (fp, response) in self._request_cache.items()}
+        payload = json.dumps({"missions": self._missions, "requests": requests}, sort_keys=True, separators=(",", ":")).encode("utf-8")
         if len(payload) > self.MAX_STATE_BYTES:
             raise ValueError("mission state exceeds limit")
         temporary = self._state_path.with_suffix(self._state_path.suffix + ".tmp")
