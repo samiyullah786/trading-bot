@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import ipaddress
 import json
 import os
 import socket
@@ -24,6 +25,10 @@ class CdpProtocolError(RuntimeError):
     pass
 
 
+class BrowserConnectionError(CdpProtocolError):
+    """The browser transport disappeared; the caller must re-discover the target."""
+
+
 class ChromeDevTools:
     """Dependency-free CDP client with bounded browser interaction primitives."""
 
@@ -37,8 +42,11 @@ class ChromeDevTools:
         self.timeout = timeout
 
     def targets(self) -> list[CdpTarget]:
-        with urllib.request.urlopen(self.endpoint + "/json", timeout=self.timeout) as response:
-            rows = json.loads(response.read().decode("utf-8"))
+        try:
+            with urllib.request.urlopen(self.endpoint + "/json", timeout=self.timeout) as response:
+                rows = json.loads(response.read().decode("utf-8"))
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            raise BrowserConnectionError(f"browser target discovery failed: {type(exc).__name__}") from exc
         return [CdpTarget(r["id"], r["webSocketDebuggerUrl"], r.get("title", ""), r.get("url", ""))
                 for r in rows if r.get("type") == "page" and r.get("webSocketDebuggerUrl")]
 
@@ -66,24 +74,29 @@ class ChromeDevTools:
         path = parsed.path or "/"
         if parsed.query:
             path += "?" + parsed.query
-        raw = socket.create_connection((parsed.hostname, port), timeout=self.timeout)
-        sock = ssl.create_default_context().wrap_socket(raw, server_hostname=parsed.hostname) if parsed.scheme == "wss" else raw
-        key = base64.b64encode(os.urandom(16)).decode()
-        request = (f"GET {path} HTTP/1.1\r\nHost: {parsed.hostname}:{port}\r\n"
-                   f"Upgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: {key}\r\n"
-                   "Sec-WebSocket-Version: 13\r\n\r\n")
-        sock.sendall(request.encode())
-        header = b""
-        while b"\r\n\r\n" not in header:
-            chunk = sock.recv(4096)
-            if not chunk:
-                raise CdpProtocolError("websocket handshake closed")
-            header += chunk
-            if len(header) > 65536:
-                raise CdpProtocolError("invalid websocket handshake")
-        if b" 101 " not in header.split(b"\r\n", 1)[0]:
-            raise CdpProtocolError("CDP websocket handshake failed")
-        return sock
+        try:
+            raw = socket.create_connection((parsed.hostname, port), timeout=self.timeout)
+            sock = ssl.create_default_context().wrap_socket(raw, server_hostname=parsed.hostname) if parsed.scheme == "wss" else raw
+            key = base64.b64encode(os.urandom(16)).decode()
+            request = (f"GET {path} HTTP/1.1\r\nHost: {parsed.hostname}:{port}\r\n"
+                       f"Upgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: {key}\r\n"
+                       "Sec-WebSocket-Version: 13\r\n\r\n")
+            sock.sendall(request.encode())
+            header = b""
+            while b"\r\n\r\n" not in header:
+                chunk = sock.recv(4096)
+                if not chunk:
+                    raise BrowserConnectionError("websocket handshake closed")
+                header += chunk
+                if len(header) > 65536:
+                    raise BrowserConnectionError("invalid websocket handshake")
+            if b" 101 " not in header.split(b"\r\n", 1)[0]:
+                raise BrowserConnectionError("CDP websocket handshake failed")
+            return sock
+        except BrowserConnectionError:
+            raise
+        except OSError as exc:
+            raise BrowserConnectionError(f"CDP transport unavailable: {type(exc).__name__}") from exc
 
     @staticmethod
     def _frame(payload: bytes) -> bytes:
@@ -104,7 +117,7 @@ class ChromeDevTools:
             while len(data) < n:
                 chunk = sock.recv(n - len(data))
                 if not chunk:
-                    raise CdpProtocolError("websocket closed")
+                    raise BrowserConnectionError("websocket closed")
                 data += chunk
             return data
 
@@ -127,9 +140,8 @@ class ChromeDevTools:
             if masked:
                 data = bytes(b ^ mask[i % 4] for i, b in enumerate(data))
             if opcode == 0x8:
-                raise CdpProtocolError("websocket closed by browser")
+                raise BrowserConnectionError("websocket closed by browser")
             if opcode == 0x9:
-                # Control frames must be answered even while a message is fragmented.
                 pong = bytes([0x8A, len(data)]) + data
                 try:
                     sock.sendall(pong)
@@ -156,14 +168,19 @@ class ChromeDevTools:
         sock = self._connect(target.websocket_url)
         try:
             payload = json.dumps({"id": 1, "method": method, "params": params or {}}).encode()
-            sock.sendall(self._frame(payload))
-            while True:
-                result = json.loads(self._read(sock).decode())
-                if result.get("id") != 1:
-                    continue
-                if "error" in result:
-                    raise CdpProtocolError(json.dumps(result["error"], sort_keys=True))
-                return result.get("result", {})
+            try:
+                sock.sendall(self._frame(payload))
+                while True:
+                    result = json.loads(self._read(sock).decode())
+                    if result.get("id") != 1:
+                        continue
+                    if "error" in result:
+                        raise CdpProtocolError(json.dumps(result["error"], sort_keys=True))
+                    return result.get("result", {})
+            except BrowserConnectionError:
+                raise
+            except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+                raise BrowserConnectionError(f"CDP command transport failed: {type(exc).__name__}") from exc
         finally:
             sock.close()
 
