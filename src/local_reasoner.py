@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import re
-from pathlib import Path
 
 from .provider import ReasoningRequest, ReasoningResponse
 
@@ -39,7 +38,7 @@ class LocalReasoner:
         actions: list[dict] = []
         matched: set[str] = set()
         for rule in self._RULES:
-            if any(re.search(rf"\\b{re.escape(keyword)}\\b", text) for keyword in rule.keywords):
+            if any(re.search(rf"\b{re.escape(keyword)}\b", text) for keyword in rule.keywords):
                 matched.add(rule.name)
                 actions.append({
                     "description": f"{rule.name}: execute the local deterministic step",
