@@ -60,6 +60,30 @@ class ServerCoreTests(unittest.TestCase):
             step = core.handle(ServerRequest("s", "mission.step", {"mission_id": "m"}))
             self.assertFalse(step.ok)
 
+    def test_run_executes_and_independently_verifies_each_action(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            core = ServerCore(Path(tmp))
+            planned = core.handle(ServerRequest("m", "mission.create", {"objective": "compile and test the repository"}))
+            self.assertTrue(planned.ok)
+            result = core.handle(ServerRequest("run-1", "mission.run", {"mission_id": "m", "max_steps": 8}))
+            self.assertTrue(result.ok)
+            self.assertEqual(result.result["status"], "completed")
+            self.assertGreaterEqual(len(result.result["history"]), 2)
+            self.assertTrue(all(entry["success"] for entry in result.result["history"]))
+            self.assertTrue(all(action["verified"] for action in result.result["actions"]))
+
+    def test_failed_action_never_advances_or_claims_completion(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            core = ServerCore(Path(tmp))
+            planned = core.handle(ServerRequest("m", "mission.create", {"objective": "run tests"}))
+            self.assertTrue(planned.ok)
+            planned.result["actions"][0]["command"] = ["definitely-not-an-executable"]
+            core._missions["m"] = planned.result
+            result = core.handle(ServerRequest("run-1", "mission.run", {"mission_id": "m", "max_steps": 2}))
+            self.assertFalse(result.ok)
+            self.assertEqual(result.result["status"], "failed")
+            self.assertEqual(result.result["next_action"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()
