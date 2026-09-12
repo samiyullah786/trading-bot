@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from urllib.parse import urlparse
 
 from .browser_cdp import ChromeDevTools
@@ -37,14 +38,12 @@ class BrowserTool:
         checks = self.verifier.validate(expected)
         if not checks:
             return None
-        # Re-discover the target after the action. This deliberately avoids
-        # reusing a stale target descriptor after navigation/crash/restart.
         fresh = self.cdp.select_target(target.id)
         selector_found = None
         if "selector" in checks:
             selector_found = bool(self.cdp.evaluate(
                 fresh,
-                "Boolean(document.querySelector(%s))" % __import__("json").dumps(checks["selector"]),
+                "Boolean(document.querySelector(%s))" % json.dumps(checks["selector"]),
             ))
         page_text = self.cdp.page_text(fresh, 20000) if "text_contains" in checks else ""
         result = self.verifier.evaluate(
@@ -67,10 +66,12 @@ class BrowserTool:
             {"operation": operation, "failure_class": "verification", "verification": {"passed": False, "checks": list(result.checks), "failures": list(result.failures)}},
         )
 
-    def _verified_action_result(self, target, operation: str, value: object, expected: object, evidence: list[str]) -> ToolResult:
+    def _verified_action_result(self, target, operation: str, expected: object, evidence: list[str]) -> ToolResult:
         verification = self._verify(target, expected, operation)
         if verification is not None:
-            return verification if not verification.success else ToolResult(
+            if not verification.success:
+                return verification
+            return ToolResult(
                 True,
                 "browser action completed and verified",
                 evidence + verification.evidence,
@@ -87,19 +88,19 @@ class BrowserTool:
                 url = str(request.payload["url"])
                 self._check_url(url)
                 result = self.cdp.navigate(target, url)
-                return self._verified_action_result(target, operation, result, expected, [f"browser.loader_id={result.get('loaderId', '')}", f"browser.url={url}"])
+                return self._verified_action_result(target, operation, expected, [f"browser.loader_id={result.get('loaderId', '')}", f"browser.url={url}"])
             if operation == "evaluate":
                 value = self.cdp.evaluate(target, request.payload["expression"])
                 return self._content_result(value, operation)
             if operation == "click":
                 value = self.cdp.click(target, request.payload["selector"])
-                return self._verified_action_result(target, operation, value, expected, [f"browser.click={value!r}"])
+                return self._verified_action_result(target, operation, expected, [f"browser.click={value!r}"])
             if operation == "focus":
                 self.cdp.focus(target, request.payload["selector"])
-                return self._verified_action_result(target, operation, True, expected, ["browser.focus=ok"])
+                return self._verified_action_result(target, operation, expected, ["browser.focus=ok"])
             if operation == "fill":
                 value = self.cdp.fill(target, request.payload["selector"], request.payload["text"])
-                return self._verified_action_result(target, operation, value, expected, [f"browser.fill={value!r}"])
+                return self._verified_action_result(target, operation, expected, [f"browser.fill={value!r}"])
             if operation == "type":
                 value = self.cdp.type_text(target, request.payload["text"])
                 return ToolResult(True, "text inserted", [f"browser.type={value}"], {"operation": operation})
@@ -120,13 +121,13 @@ class BrowserTool:
                 return self._content_result(value, operation)
             if operation == "back":
                 self.cdp.back(target)
-                return self._verified_action_result(target, operation, True, expected, ["browser.history=back"])
+                return self._verified_action_result(target, operation, expected, ["browser.history=back"])
             if operation == "forward":
                 self.cdp.forward(target)
-                return self._verified_action_result(target, operation, True, expected, ["browser.history=forward"])
+                return self._verified_action_result(target, operation, expected, ["browser.history=forward"])
             if operation == "reload":
                 self.cdp.reload(target)
-                return self._verified_action_result(target, operation, True, expected, ["browser.reload=ok"])
+                return self._verified_action_result(target, operation, expected, ["browser.reload=ok"])
             if operation == "read":
                 value = self.cdp.page_text(target, int(request.payload.get("max_chars", 20000)))
                 return self._content_result(value, operation)
@@ -135,6 +136,6 @@ class BrowserTool:
                 return ToolResult(True, f"screenshot captured ({len(data)} bytes)", [f"browser.screenshot_bytes={len(data)}"], {"operation": operation, "trust_boundary": "browser_binary"})
             return ToolResult(False, f"UNSUPPORTED_BROWSER_OPERATION:{operation}", [])
         except PermissionError as exc:
-            return ToolResult(False, f"browser policy: {exc}", [])
+            return ToolResult(False, f"browser policy: {exc}", [], {"operation": operation, "failure_class": "configuration"})
         except Exception as exc:
             return ToolResult(False, f"browser exception: {type(exc).__name__}: {exc}", [], {"operation": operation, "failure_class": "execution"})
