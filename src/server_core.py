@@ -78,7 +78,7 @@ class ServerCore:
             "objective": objective,
             "status": "planned" if actions else "blocked",
             "confidence": decision.confidence,
-            "analysis": decision.analysis,
+            "analysis": getattr(decision, "analysis", ""),
             "unknowns": list(decision.unknowns),
             "requires_research": bool(decision.requires_research),
             "actions": actions,
@@ -137,7 +137,6 @@ class ServerCore:
         if index >= len(actions):
             mission["status"] = "completed" if self._all_actions_verified(mission) else "failed"
             mission["updated_at"] = time.time()
-            self._persist_state()
             return ServerResponse(request.request_id, mission["status"] == "completed", self._public_mission(mission), None if mission["status"] == "completed" else "UNVERIFIED_ACTIONS")
 
         action = actions[index]
@@ -208,22 +207,25 @@ class ServerCore:
             return None
         if verification is not None and (not isinstance(verification, list) or not all(isinstance(v, str) and v for v in verification)):
             return None
-        return ProposedAction(
-            description=str(action.get("description", "")),
-            criterion_ids=[str(v) for v in action.get("criterion_ids", []) if isinstance(v, str)],
-            command=command,
-            expected_observation=str(action.get("expected_observation", "")),
-            verification_command=verification,
-            tool_name=str(action["tool_name"]) if action.get("tool_name") else None,
-            tool_payload=dict(action["tool_payload"]) if isinstance(action.get("tool_payload"), dict) else None,
-            depends_on=[str(v) for v in action.get("depends_on", []) if isinstance(v, str)],
-            expected_progress=float(action.get("expected_progress", 0.5)),
-            success_probability=float(action.get("success_probability", 0.5)),
-            cost=float(action.get("cost", 0.0)),
-            risk=float(action.get("risk", 0.0)),
-            reversible=bool(action.get("reversible", True)),
-            action_id=str(action["action_id"]) if action.get("action_id") else None,
-        )
+        try:
+            return ProposedAction(
+                description=str(action.get("description", "")),
+                criterion_ids=[str(v) for v in action.get("criterion_ids", []) if isinstance(v, str)],
+                command=command,
+                expected_observation=str(action.get("expected_observation", "")),
+                verification_command=verification,
+                tool_name=str(action["tool_name"]) if action.get("tool_name") else None,
+                tool_payload=dict(action["tool_payload"]) if isinstance(action.get("tool_payload"), dict) else None,
+                depends_on=[str(v) for v in action.get("depends_on", []) if isinstance(v, str)],
+                expected_progress=float(action.get("expected_progress", 0.5)),
+                success_probability=float(action.get("success_probability", 0.5)),
+                cost=float(action.get("cost", 0.0)),
+                risk=float(action.get("risk", 0.0)),
+                reversible=bool(action.get("reversible", True)),
+                action_id=str(action["action_id"]) if action.get("action_id") else None,
+            )
+        except (TypeError, ValueError):
+            return None
 
     @staticmethod
     def _all_actions_verified(mission: dict[str, Any]) -> bool:
