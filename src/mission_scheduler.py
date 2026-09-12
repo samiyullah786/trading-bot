@@ -13,6 +13,8 @@ class ScheduleDecision:
 class MissionScheduler:
     """Deterministic dependency scheduler with fail-closed plan validation."""
 
+    _TERMINAL = {"superseded", "failed_terminal"}
+
     def __init__(self, actions: list[dict[str, Any]], *, max_actions: int = 128) -> None:
         if len(actions) > max_actions:
             raise ValueError("PLAN_TOO_LARGE")
@@ -54,14 +56,18 @@ class MissionScheduler:
         for node in graph:
             visit(node)
 
+    @staticmethod
+    def _satisfied(action: dict[str, Any]) -> bool:
+        return bool(action.get("verified")) or str(action.get("status", "")) in MissionScheduler._TERMINAL
+
     def next_ready(self) -> ScheduleDecision:
         for index, action in enumerate(self.actions):
-            if action.get("verified") or action.get("status") == "verified":
+            if self._satisfied(action):
                 continue
             deps = action.get("depends_on", [])
-            if all(bool(self.actions[self._ids[dep]].get("verified")) for dep in deps):
+            if all(self._satisfied(self.actions[self._ids[dep]]) for dep in deps):
                 return ScheduleDecision(index)
-        pending = [a for a in self.actions if not a.get("verified")]
+        pending = [a for a in self.actions if not self._satisfied(a)]
         if pending:
             return ScheduleDecision(None, "NO_READY_ACTION")
         return ScheduleDecision(None, "COMPLETE")
